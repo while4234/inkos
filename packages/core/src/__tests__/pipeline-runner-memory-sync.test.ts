@@ -313,5 +313,8 @@ describe("PipelineRunner structured-state memory sync", () => {
         events: "Lin Yue follows the debt into the watchtower archive.",
       }),
     ]);
-  });
+    // Heavy end-to-end test (full writeNextChapter pipeline + sqlite memory.db +
+    // structured-state projections). The 5s default is too tight for this under
+    // parallel-suite CPU contention; give it explicit headroom.
+  }, 20000);
 });

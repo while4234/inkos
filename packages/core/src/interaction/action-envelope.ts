@@ -5,6 +5,11 @@ import { StoryNodeSchema } from "../interactive-film/graph-schema.js";
 export const ActionSourceSchema = z.enum(["free-text", "button", "slash", "quick-action"]);
 export type ActionSource = z.infer<typeof ActionSourceSchema>;
 
+export const SkillIdSchema = z.string()
+  .trim()
+  .min(1)
+  .regex(/^[a-z][a-z0-9-]*$/i, "Skill id must use letters, numbers, and hyphens.");
+
 export const RequestedIntentSchema = z.enum([
   "create_book",
   "write_next",
@@ -135,6 +140,20 @@ export const ActionPayloadSchema = z.object({
 }).strict();
 
 export type ActionPayload = z.infer<typeof ActionPayloadSchema>;
+
+export function normalizeSkillIdList(value: unknown): string[] {
+  if (value === undefined || value === null || value === "") return [];
+  const values = Array.isArray(value) ? value : [value];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of values) {
+    const parsed = SkillIdSchema.parse(item).toLowerCase();
+    if (seen.has(parsed)) continue;
+    seen.add(parsed);
+    out.push(parsed);
+  }
+  return out;
+}
 
 export function normalizeActionSource(value: unknown): ActionSource {
   if (value === undefined || value === null || value === "") return "free-text";

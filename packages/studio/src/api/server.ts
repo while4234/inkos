@@ -63,6 +63,7 @@ import {
   normalizeActionPayload as normalizeCoreActionPayload,
   normalizePlayMode as normalizeCorePlayMode,
   normalizeRequestedIntent as normalizeCoreRequestedIntent,
+  normalizeSkillIdList as normalizeCoreSkillIdList,
   inferLanguage,
   type ActionPayload,
   type ActionSource,
@@ -459,6 +460,15 @@ function normalizeStudioActionPayload(value: unknown): ActionPayload | undefined
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new ApiError(400, "INVALID_ACTION_PAYLOAD", `Invalid actionPayload: ${message}`);
+  }
+}
+
+function normalizeStudioSkillIdList(value: unknown, field: string): string[] {
+  try {
+    return normalizeCoreSkillIdList(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ApiError(400, "INVALID_SKILL_ID", `Invalid ${field}: ${message}`);
   }
 }
 
@@ -3504,6 +3514,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       actionSource: reqActionSource,
       requestedIntent: reqRequestedIntent,
       actionPayload: reqActionPayload,
+      requestedSkills: reqRequestedSkills,
+      disabledSkills: reqDisabledSkills,
       playMode: reqPlayMode,
       model: reqModel,
       service: reqService,
@@ -3515,6 +3527,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       actionSource?: string;
       requestedIntent?: string;
       actionPayload?: unknown;
+      requestedSkills?: unknown;
+      disabledSkills?: unknown;
       playMode?: string;
       model?: string;
       service?: string;
@@ -3534,9 +3548,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const actionSource = normalizeStudioActionSource(reqActionSource);
     const requestedIntent = normalizeStudioRequestedIntent(reqRequestedIntent);
     const actionPayload = normalizeStudioActionPayload(reqActionPayload);
+    const requestedSkills = normalizeStudioSkillIdList(reqRequestedSkills, "requestedSkills");
+    const disabledSkills = normalizeStudioSkillIdList(reqDisabledSkills, "disabledSkills");
     const playMode = normalizeStudioPlayMode(reqPlayMode);
 
-    broadcast("agent:start", { instruction, activeBookId, sessionId, actionSource, requestedIntent });
+    broadcast("agent:start", { instruction, activeBookId, sessionId, actionSource, requestedIntent, requestedSkills });
 
     try {
       // Load config + create LLM client (pipeline created after model resolution)
@@ -3981,6 +3997,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           actionSource,
           requestedIntent,
           actionPayload,
+          requestedSkills,
+          disabledSkills,
           sessionId: bookSession.sessionId,
           language: surfaceLanguage,
           onContextCompression: (event) => {

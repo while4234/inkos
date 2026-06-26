@@ -124,6 +124,8 @@ export interface SendMessageOptions {
   readonly actionSource?: ChatActionSource;
   readonly requestedIntent?: ChatRequestedIntent;
   readonly actionPayload?: ChatActionPayload;
+  readonly requestedSkills?: ReadonlyArray<string>;
+  readonly disabledSkills?: ReadonlyArray<string>;
   readonly playMode?: PlayMode;
 }
 

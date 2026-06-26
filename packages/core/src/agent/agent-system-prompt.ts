@@ -1,10 +1,12 @@
 import type { SessionKind } from "../interaction/session.js";
 import type { ActionSource, RequestedIntent } from "../interaction/action-envelope.js";
+import type { SkillResolutionResult } from "../skills/index.js";
 
 export interface AgentSystemPromptOptions {
   readonly actionSource?: ActionSource;
   readonly requestedIntent?: RequestedIntent;
   readonly playWorldExists?: boolean;
+  readonly skills?: SkillResolutionResult;
 }
 
 function isConfirmedAction(
@@ -59,6 +61,45 @@ When calling propose_action, instruction must be self-contained: include target 
 If information is missing, ask one key question. Do not create, write, edit, or generate files in chat.
 
 ${commonOutputRules(false)}`;
+}
+
+function appendSkillGuidance(prompt: string, isZh: boolean, skills: SkillResolutionResult | undefined): string {
+  if (!skills || skills.usedSkills.length === 0) return prompt;
+  const skillLines = skills.usedSkills.map((skill) => {
+    const prefix = skills.forcedSkillIds.includes(skill.id) ? (isZh ? "强制" : "forced") : (isZh ? "自动" : "auto");
+    const packs = skill.promptPacks.length > 0 ? `; promptPacks=${skill.promptPacks.join(", ")}` : "";
+    return `- ${skill.id} (${prefix}): ${skill.whenToUse}${packs}`;
+  });
+  const unavailable = skills.missingSkillIds.length > 0
+    ? (isZh
+        ? `\n不可用 skill：${skills.missingSkillIds.join(", ")}。不要假装已使用这些 skill。`
+        : `\nUnavailable skills: ${skills.missingSkillIds.join(", ")}. Do not pretend these skills were used.`)
+    : "";
+  const disabled = skills.disabledSkillIds.length > 0
+    ? (isZh
+        ? `\n已禁用 skill：${skills.disabledSkillIds.join(", ")}。不要按这些 skill 调整行为。`
+        : `\nDisabled skills: ${skills.disabledSkillIds.join(", ")}. Do not follow those skills.`)
+    : "";
+  const guidance = isZh
+    ? [
+        "## Skill 指导",
+        "",
+        "本轮可用的专业 skill 如下。强制 skill 是用户/界面明确要求的专业能力，除非不可用或违反安全/权限边界，否则必须按它的领域规则组织回答和工具提案。",
+        "Skill 只提供专业指导、上下文需求和 prompt pack；它不授予执行权限。创建、写入、编辑、生成图片等副作用仍必须通过当前 session 允许的工具和确认闸门。",
+        ...skillLines,
+        unavailable.trim(),
+        disabled.trim(),
+      ].filter(Boolean).join("\n")
+    : [
+        "## Skill Guidance",
+        "",
+        "Available professional skills for this turn are listed below. Forced skills were explicitly requested by the user or UI; follow their domain guidance unless unavailable or unsafe.",
+        "Skills provide guidance, context needs, and prompt packs only. They do not grant execution permission. Side effects still require the current session's allowed tools and confirmation gates.",
+        ...skillLines,
+        unavailable.trim(),
+        disabled.trim(),
+      ].filter(Boolean).join("\n");
+  return `${prompt}\n\n${guidance}`;
 }
 
 function buildBookCreatePrompt(isZh: boolean, confirmed: boolean): string {
@@ -521,21 +562,22 @@ export function buildAgentSystemPrompt(
   options: AgentSystemPromptOptions = {},
 ): string {
   const isZh = language === "zh";
+  const withSkills = (prompt: string) => appendSkillGuidance(prompt, isZh, options.skills);
 
-  if (sessionKind === "book-create") return buildBookCreatePrompt(isZh, isConfirmedAction(options, "create_book"));
+  if (sessionKind === "book-create") return withSkills(buildBookCreatePrompt(isZh, isConfirmedAction(options, "create_book")));
   if (sessionKind === "short") {
     const confirmedIntent = isConfirmedAction(options, "short_run")
       ? "short_run"
       : isConfirmedAction(options, "generate_cover")
         ? "generate_cover"
         : undefined;
-    return buildShortPrompt(isZh, confirmedIntent);
+    return withSkills(buildShortPrompt(isZh, confirmedIntent));
   }
-  if (sessionKind === "play") return buildPlayPrompt(isZh, isConfirmedAction(options, "play_start"), options.playWorldExists === true);
-  if (sessionKind === "script") return buildScriptPrompt(isZh, isConfirmedAction(options, "script_create"));
-  if (sessionKind === "storyboard") return buildStoryboardPrompt(isZh, isConfirmedAction(options, "storyboard_create"));
-  if (sessionKind === "interactive-film") return buildInteractiveFilmPrompt(isZh, isConfirmedAction(options, "interactive_film_create"));
-  if (sessionKind === "edit") return buildEditPrompt(bookId, isZh);
-  if (sessionKind === "book" && bookId) return buildBookPrompt(bookId, isZh);
-  return buildChatPrompt(isZh);
+  if (sessionKind === "play") return withSkills(buildPlayPrompt(isZh, isConfirmedAction(options, "play_start"), options.playWorldExists === true));
+  if (sessionKind === "script") return withSkills(buildScriptPrompt(isZh, isConfirmedAction(options, "script_create")));
+  if (sessionKind === "storyboard") return withSkills(buildStoryboardPrompt(isZh, isConfirmedAction(options, "storyboard_create")));
+  if (sessionKind === "interactive-film") return withSkills(buildInteractiveFilmPrompt(isZh, isConfirmedAction(options, "interactive_film_create")));
+  if (sessionKind === "edit") return withSkills(buildEditPrompt(bookId, isZh));
+  if (sessionKind === "book" && bookId) return withSkills(buildBookPrompt(bookId, isZh));
+  return withSkills(buildChatPrompt(isZh));
 }

@@ -106,6 +106,29 @@ describe("chat message actions", () => {
     expect(body.sessionKind).toBe("book");
   });
 
+  it("parses @skill directives into requestedSkills and strips them from the agent instruction", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "play", "open");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "play" } })
+      .mockResolvedValueOnce({
+        response: "ok",
+        session: { sessionId, bookId: null, sessionKind: "play" },
+      });
+
+    await store.getState().sendMessage(sessionId, "@open-world-play 做一个魔兽风开放世界", {
+      sessionKind: "play",
+      requestedSkills: ["open-world-play"],
+    });
+
+    const agentCall = fetchJson.mock.calls.find(([path]) => path === "/agent");
+    expect(agentCall).toBeDefined();
+    const body = JSON.parse((agentCall?.[1] as { body: string }).body);
+    expect(body.instruction).toBe("做一个魔兽风开放世界");
+    expect(body.requestedSkills).toEqual(["open-world-play"]);
+  });
+
   it("keeps a tool-only stream when /agent returns an empty response after a proposal", async () => {
     const store = createTestStore();
     const sessionId = store.getState().createDraftSession(null, "book-create");

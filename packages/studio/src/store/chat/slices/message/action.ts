@@ -22,6 +22,37 @@ import {
   withToolExecutions,
 } from "./runtime";
 
+const SKILL_DIRECTIVE_RE = /(^|\s)@([a-z][a-z0-9-]*)(?=\s|$)/gi;
+
+function parseSkillDirectives(text: string): { instruction: string; requestedSkills: string[] } {
+  const requestedSkills: string[] = [];
+  const seen = new Set<string>();
+  const instruction = text.replace(SKILL_DIRECTIVE_RE, (match, prefix: string, rawId: string) => {
+    const id = rawId.toLowerCase();
+    if (!seen.has(id)) {
+      seen.add(id);
+      requestedSkills.push(id);
+    }
+    return prefix;
+  }).replace(/\s+/g, " ").trim();
+  return { instruction: instruction || text.trim(), requestedSkills };
+}
+
+function mergeSkillIds(
+  parsed: ReadonlyArray<string>,
+  explicit: ReadonlyArray<string> | undefined,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of [...parsed, ...(explicit ?? [])]) {
+    const id = value.trim().toLowerCase();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions> = (set, get) => ({
   activateSession: (sessionId) =>
     set({ activeSessionId: sessionId }),
@@ -362,7 +393,10 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       }
     }
 
-    const instruction = trimmed;
+    const skillDirectives = parseSkillDirectives(trimmed);
+    const instruction = skillDirectives.instruction;
+    const requestedSkills = mergeSkillIds(skillDirectives.requestedSkills, options?.requestedSkills);
+    const disabledSkills = mergeSkillIds([], options?.disabledSkills);
     const streamTs = Date.now() + 1;
 
     set((state) => ({
@@ -394,6 +428,8 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           actionSource,
           requestedIntent: options?.requestedIntent,
           actionPayload: options?.actionPayload,
+          requestedSkills,
+          disabledSkills,
           sessionId,
           model: get().selectedModel ?? undefined,
           service: get().selectedService ?? undefined,

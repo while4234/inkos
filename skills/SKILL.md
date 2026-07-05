@@ -1,7 +1,7 @@
 ---
 name: inkos
 description: Story Creation AI Agent with Studio Chat, CLI, and TUI - use for long-form novels, standalone short fiction, scripts, storyboards, interactive-film projects, open-world / branching play, fan fiction, spinoffs, style imitation, continuations, covers, EPUB export, AIGC detection, and project analytics. Includes runtime skills, traceable web research, governed context assembly, protected/compressible context budgeting, persistent story state, multi-model routing, cover/image services, custom OpenAI-compatible providers, and InkOS Studio web UI.
-version: 2.5.1
+version: 2.5.2
 metadata: { "openclaw": { "emoji": "📖", "requires": { "bins": ["inkos", "node"], "env": ["OPENAI_API_KEY"] }, "primaryEnv": "OPENAI_API_KEY", "homepage": "https://github.com/Narcooo/inkos", "install": [{ "id": "npm", "kind": "node", "package": "@actalk/inkos", "label": "Install InkOS (npm)" }] } }
 ---
 
@@ -16,7 +16,7 @@ Long-form writing still uses the chapter pipeline internally:
 
 Truth files are persisted as schema-validated JSON (`story/state/*.json`) with markdown projections for human readability. SQLite temporal memory database (`story/memory.db`) enables relevance-based retrieval on Node 22+.
 
-## v1.6.1 Mental Model
+## v1.6.2 Mental Model
 
 Treat InkOS as a confirmable action system, not a bag of prompt shortcuts.
 
@@ -35,7 +35,7 @@ Treat InkOS as a confirmable action system, not a bag of prompt shortcuts.
 - Prompt packs are user-tunable in Studio Project Settings. Project overrides are saved under `prompt/<pack>/<prompt>.md`; do not edit generated artifacts just to change system behavior.
 - Long-form chapter revision from Chat passes the current user instruction into the reviser as a one-off brief. If the revision is not applied, inspect the returned gate metrics and remaining audit issues before claiming it was fixed.
 
-v1.6.1 keeps the v1.6 interactive-film and runtime-skill model, and adds Chat attachments, material archive/retrieval, abortable agent turns, Studio-editable prompt packs, and clearer Chat-driven chapter revision diagnostics. Still surface unresolved audit issues plainly instead of claiming they were fixed.
+v1.6.2 keeps the v1.6 interactive-film and runtime-skill model, and adds Chat attachments, material archive/retrieval, abortable agent turns, Studio-editable prompt packs, and clearer Chat-driven chapter revision diagnostics. Still surface unresolved audit issues plainly instead of claiming they were fixed.
 
 ## When to Use InkOS
 

@@ -1,6 +1,6 @@
 {
   "name": "@actalk/inkos-studio",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "InkOS Studio — web workbench for story creation, InkOS Short, covers, and open-world interactive play",
   "type": "module",
   "main": "dist/api/index.js",

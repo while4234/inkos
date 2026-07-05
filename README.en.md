@@ -30,9 +30,9 @@ InkOS is a local AI creation system for long-form novels, standalone short ficti
 
 > 💡 **Give your writing agent a professional data layer first** — writing fiction isn't just about the model; what's usually missing is the source material. Pair InkOS with [**火花数据API (huohuaapi)**](https://huohuaapi.com/): a pay-per-call novel / web-fiction creation data API. Before the agent writes, it can pull sourced material — novel text, chapter structure, character profiles, writing style, and craft methods — instead of relying on prompts alone to fake a "plot outline".
 
-## v1.6.1 Chat Attachments, Material Library, and Editable Prompts
+## v1.6.2 Chat Attachments, Material Library, and Editable Prompts
 
-v1.6.1 makes Studio Chat a more practical collaboration surface: upload documents, Markdown files, and images; interrupt long-running turns; archive external materials for later retrieval; and tune the prompt packs that guide long-form writing, Play, and interactive-film authoring.
+v1.6.2 makes Studio Chat a more practical collaboration surface: upload documents, Markdown files, and images; interrupt long-running turns; archive external materials for later retrieval; and tune the prompt packs that guide long-form writing, Play, and interactive-film authoring.
 
 - **Files and images in Chat**: text / Markdown attachments are injected into the LLM context; image attachments are sent as multimodal input to vision-capable models.
 - **Material archive and retrieval**: external references can be stored in the project material library and retrieved later with evidence traces instead of repeatedly pasting them into chat.

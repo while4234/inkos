@@ -455,8 +455,100 @@ describe("PipelineRunner", () => {
       }
     ).resolveOverride.bind(runner);
 
+    const resolved = resolveOverride("writer");
+    expect(resolved.model).toBe("writer-model");
+    expect(resolved.client).not.toBe(client);
+    expect(resolved.client).toMatchObject({
+      provider: client.provider,
+      apiFormat: client.apiFormat,
+      stream: client.stream,
+    });
+    expect(
+      (resolved.client as { readonly _routeRuntime?: unknown })._routeRuntime,
+    ).toBeDefined();
+  });
+
+  it("keeps legacy model-only overrides on the compatibility client", () => {
+    const client = {
+      provider: "openai",
+      apiFormat: "chat",
+      stream: false,
+      defaults: {
+        temperature: 0.7,
+        maxTokens: 4096,
+        thinkingBudget: 0,
+      },
+    } as ConstructorParameters<typeof PipelineRunner>[0]["client"];
+    const routing = {
+      version: 1 as const,
+      credentials: [{
+        id: "credential-base",
+        kind: "api_key" as const,
+        label: "Base",
+        scope: "project" as const,
+      }],
+      backends: [{
+        id: "backend-base",
+        displayName: "Base",
+        service: "custom:Base",
+        provider: "custom" as const,
+        baseUrl: "https://base.example/v1",
+        credentialRef: {
+          id: "credential-base",
+          kind: "api_key" as const,
+        },
+        enabled: true,
+        transport: {
+          apiFormat: "chat" as const,
+          stream: false,
+        },
+      }],
+      routes: [{
+        id: "route-default",
+        displayName: "Default",
+        promptFamily: "generic",
+        enabled: true,
+        candidates: [{
+          backendId: "backend-base",
+          upstreamModelId: "base-model",
+        }],
+      }],
+      defaultRouteId: "route-default",
+    };
+    const runner = new PipelineRunner({
+      client,
+      model: "base-model",
+      projectRoot: process.cwd(),
+      defaultLLMConfig: {
+        provider: "custom",
+        service: "custom",
+        configSource: "studio",
+        baseUrl: "https://base.example/v1",
+        apiKey: "fixture-key",
+        model: "base-model",
+        temperature: 0.7,
+        thinkingBudget: 0,
+        apiFormat: "chat",
+        stream: false,
+        routing,
+      },
+      modelOverrides: {
+        writer: "legacy-writer-model",
+        auditor: { model: "legacy-auditor-model" },
+      },
+    });
+    const resolveOverride = (
+      runner as unknown as {
+        resolveOverride: (agent: string) => { model: string; client: unknown };
+      }
+    ).resolveOverride.bind(runner);
+
     expect(resolveOverride("writer")).toEqual({
-      model: "writer-model",
+      model: "legacy-writer-model",
+      client,
+    });
+    expect(resolveOverride("auditor")).toEqual({
+      model: "legacy-auditor-model",
       client,
     });
   });

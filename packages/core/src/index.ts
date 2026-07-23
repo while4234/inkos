@@ -452,6 +452,8 @@ export {
   type LLMClient,
   type LLMResponse,
   type LLMMessage,
+  type ChatCompletionOptions,
+  type LLMRouteRuntimeDelegate,
   type StreamProgress,
   type OnStreamProgress,
 } from "./llm/provider.js";
@@ -468,6 +470,7 @@ export {
   type ProviderErrorCategory,
   type ProviderErrorDetails,
   type ProviderErrorRouteContext,
+  type ProviderErrorAttemptSummary,
   type RetryAfter,
 } from "./llm/provider-error.js";
 export {
@@ -517,6 +520,57 @@ export {
   type ResolvedApiKeyCredential,
 } from "./llm/credentials/index.js";
 export { writeJsonAtomically } from "./llm/atomic-json.js";
+export {
+  BACKEND_HEALTH_SCHEMA_VERSION,
+  BACKEND_HEALTH_RELATIVE_PATH,
+  BackendHealthStatusSchema,
+  BackendHealthFileSchema,
+  FileBackendHealthStore,
+  backendHealthFilePath,
+  createEmptyBackendHealthFile,
+  isBackendAvailable,
+  type BackendHealthStatus,
+  type BackendProbeResult,
+  type BackendHealthRecord,
+  type RouteHealthRecord,
+  type BackendHealthFile,
+  type BackendFailureUpdate,
+  type BackendProbeUpdate,
+  type BackendHealthStore,
+} from "./llm/backend-health-store.js";
+export {
+  BackendPool,
+  type CandidateSkipReason,
+  type SkippedBackendCandidate,
+  type ResolvedBackendCandidate,
+  type BackendPoolResolution,
+  type BackendPoolOptions,
+} from "./llm/backend-pool.js";
+export {
+  DEFAULT_FAILOVER_POLICY,
+  decideFailover,
+  abortableRoutingDelay,
+  type FailoverPolicyConfig,
+  type FailoverAction,
+  type FailoverDecision,
+} from "./llm/failover-policy.js";
+export {
+  ROUTING_EVENT_TYPES,
+  RoutingEventEmitter,
+  type RoutingEventType,
+  type RoutingEventPhase,
+  type RoutingEvent,
+  type RoutingEventObserver,
+} from "./llm/routing-trace.js";
+export {
+  createRouteAwareLLMClient,
+  ResilientChatRuntime,
+  RouteExhaustedError,
+  type CreateRouteAwareLLMClientOptions,
+  type ResilientChatRuntimeOptions,
+  type RoutingAttemptFailure,
+  type RouteExhaustedErrorDetails,
+} from "./llm/resilient-client.js";
 export {
   COVER_PROVIDER_PRESETS,
   coverSecretKey,

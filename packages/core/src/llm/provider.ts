@@ -121,6 +121,27 @@ export interface LLMMessage {
   readonly content: string;
 }
 
+export interface ChatCompletionOptions {
+  readonly temperature?: number;
+  readonly maxTokens?: number;
+  readonly webSearch?: boolean;
+  readonly onStreamProgress?: OnStreamProgress;
+  readonly onTextDelta?: (text: string) => void;
+  readonly signal?: AbortSignal;
+  readonly errorContext?: ProviderErrorRouteContext;
+  // Diagnostics / connectivity checks want a fast pass-or-fail — set false to
+  // skip the transient 502/503/429 retry+backoff (e.g. the doctor probe).
+  readonly retry?: boolean;
+}
+
+export interface LLMRouteRuntimeDelegate {
+  complete(
+    model: string,
+    messages: ReadonlyArray<LLMMessage>,
+    options?: ChatCompletionOptions,
+  ): Promise<LLMResponse>;
+}
+
 export interface LLMClient {
   readonly provider: "openai" | "anthropic";
   readonly service?: string;
@@ -130,6 +151,10 @@ export interface LLMClient {
   readonly proxyUrl?: string;
   readonly _piModel?: PiModel<PiApi>;
   readonly _apiKey?: string;
+  /** Internal route-aware dispatch. Concrete backend clients never carry it. */
+  readonly _routeRuntime?: LLMRouteRuntimeDelegate;
+  /** Internal marker that selects the structured native compatible transport. */
+  readonly _routingBackendId?: string;
   readonly defaults: {
     readonly temperature: number;
     /**
@@ -518,6 +543,12 @@ async function abortableDelay(delayMs: number, signal?: AbortSignal): Promise<vo
 }
 
 function shouldUseNativeCustomTransport(client: LLMClient): boolean {
+  if (
+    client._routingBackendId
+    && (client.provider === "openai" || client.provider === "anthropic")
+  ) {
+    return true;
+  }
   if (client.service === "minimax" && client.provider === "openai") {
     return true;
   }
@@ -1129,20 +1160,12 @@ export async function chatCompletion(
   client: LLMClient,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  options?: {
-    readonly temperature?: number;
-    readonly maxTokens?: number;
-    readonly webSearch?: boolean;
-    readonly onStreamProgress?: OnStreamProgress;
-    readonly onTextDelta?: (text: string) => void;
-    readonly signal?: AbortSignal;
-    readonly errorContext?: ProviderErrorRouteContext;
-    // Diagnostics / connectivity checks want a fast pass-or-fail — set false to
-    // skip the transient 502/503/429 retry+backoff (e.g. the doctor probe).
-    readonly retry?: boolean;
-  },
+  options?: ChatCompletionOptions,
 ): Promise<LLMResponse> {
   if (isLlmStubEnabled()) return Promise.resolve(stubChatCompletion(messages, model));
+  if (client._routeRuntime) {
+    return client._routeRuntime.complete(model, messages, options);
+  }
   // C1 (v2.0.0)：删除 maxTokensCap 机制。per-call 显式传的 maxTokens 永远不被裁剪。
   const resolved = {
     temperature: clampTemperatureForModel(

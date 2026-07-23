@@ -20,6 +20,13 @@ export interface ProviderErrorRouteContext {
   readonly upstreamModelId?: string;
 }
 
+export interface ProviderErrorAttemptSummary extends Required<ProviderErrorRouteContext> {
+  readonly attemptNumber: number;
+  readonly category: ProviderErrorCategory;
+  readonly safeReason: string;
+  readonly visibleOutput: boolean;
+}
+
 export interface RetryAfter {
   readonly source: "retry-after" | "x-ratelimit-reset";
   readonly raw: string;
@@ -40,6 +47,7 @@ export interface ProviderErrorDetails extends ProviderErrorRouteContext {
   readonly onCurrentBackend: boolean;
   readonly failoverEligible: boolean;
   readonly cancelled: boolean;
+  readonly attempts?: ReadonlyArray<ProviderErrorAttemptSummary>;
 }
 
 interface ProviderErrorPolicy {
@@ -65,6 +73,7 @@ interface ProviderErrorInit extends ProviderErrorRouteContext {
   readonly visibleOutput?: boolean;
   readonly cancelled?: boolean;
   readonly cause?: unknown;
+  readonly attempts?: ReadonlyArray<ProviderErrorAttemptSummary>;
 }
 
 interface ErrorEvidence {
@@ -201,6 +210,7 @@ export class ProviderError extends Error {
   readonly onCurrentBackend: boolean;
   readonly failoverEligible: boolean;
   readonly cancelled: boolean;
+  readonly attempts?: ReadonlyArray<ProviderErrorAttemptSummary>;
   override readonly cause?: unknown;
 
   constructor(init: ProviderErrorInit) {
@@ -226,6 +236,7 @@ export class ProviderError extends Error {
     this.onCurrentBackend = policy.onCurrentBackend;
     this.failoverEligible = policy.failoverEligible;
     this.cancelled = cancelled;
+    this.attempts = init.attempts?.map(sanitizeAttemptSummary);
     this.cause = init.cause;
   }
 
@@ -249,6 +260,26 @@ export class ProviderError extends Error {
       visibleOutput,
       cancelled: this.cancelled,
       cause: this.cause,
+      attempts: this.attempts,
+    });
+  }
+
+  withAttempts(attempts: ReadonlyArray<ProviderErrorAttemptSummary>): ProviderError {
+    return new ProviderError({
+      category: this.category,
+      safeMessage: this.safeMessage,
+      status: this.status,
+      upstreamCode: this.upstreamCode,
+      upstreamType: this.upstreamType,
+      retryAfter: this.retryAfter,
+      backendId: this.backendId,
+      logicalModelId: this.logicalModelId,
+      upstreamModelId: this.upstreamModelId,
+      requestId: this.requestId,
+      visibleOutput: this.visibleOutput,
+      cancelled: this.cancelled,
+      cause: this.cause,
+      attempts,
     });
   }
 }
@@ -343,6 +374,9 @@ export function toSafeProviderErrorDetails(error: ProviderError): ProviderErrorD
     onCurrentBackend: error.onCurrentBackend,
     failoverEligible: error.failoverEligible,
     cancelled: error.cancelled,
+    ...(error.attempts && error.attempts.length > 0
+      ? { attempts: error.attempts }
+      : {}),
   };
 }
 
@@ -690,6 +724,22 @@ function sanitizeMetadata(value: string | null | undefined): string | undefined 
     .trim()
     .slice(0, MAX_SAFE_FIELD_LENGTH);
   return sanitized || undefined;
+}
+
+function sanitizeAttemptSummary(
+  attempt: ProviderErrorAttemptSummary,
+): ProviderErrorAttemptSummary {
+  return {
+    backendId: sanitizeMetadata(attempt.backendId) ?? "unknown",
+    logicalModelId: sanitizeMetadata(attempt.logicalModelId) ?? "unknown",
+    upstreamModelId: sanitizeMetadata(attempt.upstreamModelId) ?? "unknown",
+    attemptNumber: Number.isInteger(attempt.attemptNumber)
+      ? Math.max(0, attempt.attemptNumber)
+      : 0,
+    category: attempt.category,
+    safeReason: sanitizeMetadata(attempt.safeReason) ?? "Provider request failed.",
+    visibleOutput: attempt.visibleOutput,
+  };
 }
 
 function readUnknown(value: object, key: string): unknown {

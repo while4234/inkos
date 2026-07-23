@@ -48,3 +48,47 @@ normal load deterministically reconstructs version 1 routing.
 OAuth access/refresh tokens are outside this migration. They must never be
 placed in `.inkos/secrets.json`, `inkos.json`, logs, API payloads, or project
 fixtures.
+
+## Runtime failover and backend health
+
+Production `PipelineRunner` calls use the configured default logical route.
+Route-based agent overrides use the same runtime and health store. Candidate
+order is stable; a request never leaves its selected `LogicalModelRoute`, even
+when candidates map that logical model to different upstream model IDs.
+Library and non-runner production paths can use
+`createRouteAwareLLMClient()` and keep the existing
+`chatCompletion(client, model, messages, options)` signature. A configuration
+without `llm.routing` returns the ordinary single client unchanged.
+Legacy model-only or explicit base-URL overrides continue through their
+original single-client compatibility path; selecting a multi-backend logical
+model requires a route reference so InkOS never guesses a different route.
+
+The API-key runtime applies this bounded policy:
+
+| Category | Current backend | Next candidate |
+| --- | --- | --- |
+| `quota` | no local retry; mark `quota_exhausted` | switch immediately |
+| `auth` | no refresh; mark `auth_required` | switch immediately |
+| `rate_limit` | one retry with bounded `Retry-After` | cooldown, then switch |
+| `network`, `timeout`, `overloaded` | two bounded backoff retries | cooldown, then switch |
+| `model_unavailable` | no local retry | cooldown, then switch |
+| invalid/context/policy/unknown/cancelled | no retry | no switch |
+
+Any non-empty text delivered through `onTextDelta` closes the replay boundary:
+an error after that point is returned with `visibleOutput: true`, and InkOS
+does not retry or switch. Calls without a delta callback may replay the whole
+request before a result is returned; partial content from different backends
+is never joined.
+
+Health is stored in `.inkos/backend-health.json` with atomic replacement and
+serialized read-modify-write updates within the running InkOS process. It
+records per-backend success/failure,
+consecutive failures, cooldown/recovery conditions and probe result, plus the
+active backend for each route. Temporary cooldowns become eligible after their
+deadline while retaining history. Quota and authentication states require an
+explicit `ResilientChatRuntime.resetBackend()` or successful
+`recordProbe()` call; they never recover on a short timer.
+
+Codex and Grok credential references remain explicit but unavailable to this
+API-key runtime. They are skipped with a safe unsupported-credential reason
+until their dedicated transports are added.

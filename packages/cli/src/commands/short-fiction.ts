@@ -12,6 +12,7 @@ import {
   SHORT_FICTION_MIN_CHAPTERS,
   SHORT_FICTION_MIN_CHARS_PER_CHAPTER,
   createLLMClient,
+  createRouteAwareLLMClient,
   runShortFictionProduction,
   type LLMConfig,
   type Logger,
@@ -220,7 +221,13 @@ async function createShortRuntime(
     if (options.model) config.llm.model = options.model;
     const pipelineConfig = buildPipelineConfig(config, root, { quiet: options.quiet });
     return {
-      client: pipelineConfig.client,
+      client: options.llmBaseUrl || options.model
+        ? pipelineConfig.client
+        : createRouteAwareLLMClient({
+            config: config.llm,
+            projectRoot: root,
+            compatibilityClient: pipelineConfig.client,
+          }),
       model: pipelineConfig.model,
       logger: pipelineConfig.logger,
       onStreamProgress: pipelineConfig.onStreamProgress,

@@ -32,6 +32,7 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - 2026-07-23 `6b72785a` added: repository attribution, durable update semantics, local setup/start launchers, and validation records.
 - 2026-07-23 PR-01 acceptance completed: added the logical-model routing foundation, atomic credential migration, compatibility writers, masked Studio secret reads, and a bounded CLI doctor connectivity probe. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1781, Studio 549, CLI 229 tests).
 - 2026-07-23 PR-02 acceptance completed: added structured provider errors, conservative classification, bounded Retry-After parsing, cancellation and visible-output semantics, safe display/serialization, and shared Core/CLI/Studio compatibility adapters. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1811, Studio 549, CLI 229 tests).
+- 2026-07-24 PR-03 acceptance completed: added route-aware API-key failover, bounded per-backend retries, persistent backend health, safe aggregate attempts, routing events, PipelineRunner/short-fiction integration, and legacy override compatibility. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1829, Studio 549, CLI 229 tests).
 
 ## Model Continuity Pipeline
 
@@ -45,6 +46,10 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - PR-02 commit subject: `feat: add structured provider errors`.
 - PR-02 security review: provider causes and raw bodies stay out of safe JSON/API output; added Authorization/API-key strings are mock fixtures only, and no real credential or runtime/pipeline state is included.
 - PR-02 scope boundary: classification exposes retry/failover eligibility but does not select, score, persist health for, or switch backends; those behaviors remain reserved for PR-03.
+- PR-03 branch: `feature/model-continuity-pr03`.
+- PR-03 commit subject: `feat: add resilient backend failover`.
+- PR-03 security review: `.inkos/backend-health.json` remains ignored runtime state; persisted reasons, aggregate errors, and routing events are bounded and credential-safe; all credential-shaped additions are mock fixtures or redaction rules.
+- PR-03 scope boundary: only API-key/OpenAI-compatible production routing is enabled. Codex/Grok credentials, Studio Agent streaming, model-family prompts, UI management, and cost/trace unification remain later PR work.
 
 ## Rollback Notes
 

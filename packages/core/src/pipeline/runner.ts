@@ -6,6 +6,9 @@ import type { BookConfig, FanficMode, RevisionGate } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import type { NotifyChannel, LLMConfig, ModelOverride, InputGovernanceMode } from "../models/project.js";
 import { resolveLogicalModelRoute } from "../llm/model-routing.js";
+import { ResilientChatRuntime } from "../llm/resilient-client.js";
+import type { BackendHealthStore } from "../llm/backend-health-store.js";
+import type { RoutingEventObserver } from "../llm/routing-trace.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import { ArchitectAgent, type ArchitectOutput } from "../agents/architect.js";
 import { FoundationReviewerAgent } from "../agents/foundation-reviewer.js";
@@ -284,6 +287,8 @@ export interface PipelineConfig {
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
   readonly onContextCompression?: ContextCompressionCallback;
+  readonly backendHealthStore?: BackendHealthStore;
+  readonly onRoutingEvent?: RoutingEventObserver;
 }
 
 export interface TokenUsageSummary {
@@ -413,12 +418,33 @@ export interface InitBookOptions {
 export class PipelineRunner {
   private readonly state: StateManager;
   private readonly config: PipelineConfig;
+  private readonly compatibilityClient: LLMClient;
   private readonly agentClients = new Map<string, LLMClient>();
+  private readonly routingRuntime?: ResilientChatRuntime;
   private readonly operationContext = new AsyncLocalStorage<{ readonly signal?: AbortSignal }>();
   private memoryIndexFallbackWarned = false;
 
   constructor(config: PipelineConfig) {
-    this.config = config;
+    this.compatibilityClient = config.client;
+    const routing = config.defaultLLMConfig?.routing;
+    if (routing && config.defaultLLMConfig) {
+      this.routingRuntime = new ResilientChatRuntime({
+        routing,
+        projectRoot: config.projectRoot,
+        baseConfig: config.defaultLLMConfig,
+        healthStore: config.backendHealthStore,
+        observer: config.onRoutingEvent,
+      });
+      this.config = {
+        ...config,
+        client: this.routingRuntime.createRouteClient(
+          routing.defaultRouteId,
+          config.client,
+        ),
+      };
+    } else {
+      this.config = config;
+    }
     this.state = new StateManager(config.projectRoot);
   }
 
@@ -622,34 +648,26 @@ export class PipelineRunner {
       return { model: this.config.model, client: this.config.client };
     }
     if (typeof override === "string") {
-      return { model: override, client: this.config.client };
+      return { model: override, client: this.compatibilityClient };
     }
     if ("routeId" in override) {
       const routing = this.config.defaultLLMConfig?.routing;
-      if (!routing) {
+      if (!routing || !this.routingRuntime) {
         throw new Error(`Model override route "${override.routeId}" requires llm.routing configuration.`);
       }
       const route = resolveLogicalModelRoute(routing, override.routeId);
       const candidate = route.candidates[0]!;
-      const backend = routing.backends.find((entry) => entry.id === candidate.backendId);
-      if (!backend) {
-        throw new Error(`Logical model route "${route.id}" references an unavailable backend.`);
+      const cacheKey = `route:${route.id}`;
+      let client = this.agentClients.get(cacheKey);
+      if (!client) {
+        client = this.routingRuntime.createRouteClient(route.id, this.config.client);
+        this.agentClients.set(cacheKey, client);
       }
-      if (!backend.enabled) {
-        throw new Error(`Logical model route "${route.id}" references disabled backend "${backend.id}".`);
-      }
-      const defaultRoute = resolveLogicalModelRoute(routing, routing.defaultRouteId);
-      const defaultBackendId = defaultRoute.candidates[0]?.backendId;
-      if (backend.id !== defaultBackendId) {
-        throw new Error(
-          `Logical model route "${route.id}" requires backend "${backend.id}"; cross-backend routing is not enabled yet.`,
-        );
-      }
-      return { model: candidate.upstreamModelId, client: this.config.client };
+      return { model: candidate.upstreamModelId, client };
     }
     // Full override — needs its own client if baseUrl differs
     if (!override.baseUrl) {
-      return { model: override.model, client: this.config.client };
+      return { model: override.model, client: this.compatibilityClient };
     }
     const base = this.config.defaultLLMConfig;
     const provider = override.provider ?? base?.provider ?? "custom";

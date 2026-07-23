@@ -331,7 +331,13 @@ export const doctorCommand = new Command("doctor")
               });
               const response = await chatCompletion(client, model, [
                 { role: "user", content: "Say OK" },
-              ], { maxTokens: 16, signal: connectivitySignal });
+              ], {
+                maxTokens: 16,
+                signal: connectivitySignal,
+                retry: false,
+                // The doctor tests connectivity, not creative-writing behavior.
+                modelGlobalPrompt: "disabled",
+              });
 
               connected = true;
               detectedDetail = `OK (model: ${model}, apiFormat=${plan.apiFormat}, stream=${plan.stream}, tokens: ${response.usage.totalTokens})`;

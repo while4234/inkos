@@ -1,9 +1,9 @@
 # Project Handoff
 
-Last updated: 2026-07-24 00:23 CST
+Last updated: 2026-07-24 00:52 CST
 Project root: D:\lnkos
 Pipeline: `model-continuity-p0`
-Position: PR-03 accepted on `feature/model-continuity-pr03`; delivery target is `origin/master`
+Position: PR-04 accepted on `feature/model-continuity-pr04`; delivery target is `origin/master`
 
 ## Current Goal
 
@@ -11,56 +11,56 @@ Deliver PR-01 through PR-09 serially. Each PR uses a different implementation ag
 
 ## Current Position
 
-PR-01 and PR-02 are already committed and verified on `origin/master`; PR-02 is at `f43849a9f4d6ade8d4813c195fd1a62dfaea5a74`. PR-03 adds the sole API-key route-aware runtime, bounded retry/failover policy, persistent backend health, safe aggregate attempts, and routing events. Its implementation, focused validation, full repository gates, compatibility review, and safe-output review are complete. It is ready for one atomic commit, fast-forward delivery to `master`, remote SHA verification, and pipeline completion recording.
+PR-01 through PR-03 are committed and verified on `origin/master`; PR-03 is at `4e688e98ae8784fcf5c35fc4bb30c9d22e78f597`. PR-04 adds explicit model-family selection plus one final-transport-boundary prompt implementation shared by direct and route-aware `chatCompletion()`. Its implementation, focused validation, full repository gates, build-artifact check, compatibility review, and safe-output review are complete. Delivery is one atomic commit followed by fast-forward-only `master` update, `origin/master` push, remote SHA verification, and local pipeline completion recording.
 
 ## Recent Actions
 
-- Added `BackendPool`, `ResilientChatRuntime`, bounded failover policy, backend health store, route events, and safe route-exhaustion details.
-- Persisted backend health at ignored runtime path `.inkos/backend-health.json` with atomic replace and same-process serialized read-modify-write updates.
-- Integrated the default logical route and route-based agent overrides into `PipelineRunner`; short-fiction project runs use the same route-aware client.
-- Preserved raw string/model-only and explicit base-URL overrides on their original single-client path so legacy model selection is not swallowed by the default route.
-- Enforced no retry/switch after a non-empty text delta and preserved structured visible-output attempt summaries.
-- Added local A/B HTTP integration, retry/switch matrix, health concurrency/write-failure, candidate skip, cancellation, event order, input immutability, and compatibility tests.
+- Added `PromptFamilySchema` support for `gpt`, `grok`, `deepseek`, and `none`, retaining `generic` only as the deterministic compatibility sentinel for already-migrated routes.
+- Added three independently auditable TypeScript prompt assets with stable IDs, revisions, and non-secret boundary markers.
+- Added pure deep-cloning injection/stripping that replaces old family/revision prefixes, remains idempotent, and always precedes existing string, structured, or opaque system content.
+- Resolved one family/revision per logical route before attempts and reused it across local retry and A-to-B failover; routing events expose metadata only.
+- Explicitly disabled model-global prompting in Core provider verification, CLI doctor connectivity, and Studio service probes.
+- Exported a reusable Grok history transform that removes replayed assistant reasoning/thinking while preserving text and tool semantics for PR-08.
+- Added family-resolution, asset, ordering, immutability, history, probe opt-out, and local A/B HTTP tests; corrected marker matching so project-owned lookalike markers are never stripped.
 
 ## Changed / Relevant Files
 
-- `packages/core/src/llm/backend-health-store.ts`
-- `packages/core/src/llm/backend-pool.ts`
-- `packages/core/src/llm/failover-policy.ts`
+- `packages/core/src/llm/model-global-prompt.ts`
+- `packages/core/src/llm/model-global-prompts/{gpt,grok,deepseek}.ts`
+- `packages/core/src/llm/model-routing.ts`
 - `packages/core/src/llm/resilient-client.ts`
 - `packages/core/src/llm/routing-trace.ts`
 - `packages/core/src/llm/provider.ts`
-- `packages/core/src/llm/provider-error.ts`
-- `packages/core/src/pipeline/runner.ts`
+- `packages/core/src/llm/providers/verify.ts`
 - `packages/core/src/index.ts`
-- `packages/cli/src/commands/short-fiction.ts`
-- Four new PR-03 Core test files and `pipeline-runner.test.ts`
+- `packages/core/src/__tests__/model-global-prompt.test.ts`
+- Routing, resilient-client, verify, PipelineRunner, Studio server, and CLI doctor tests/call sites
 - `MODEL_ROUTING.md`
 
 ## Validation
 
 - `corepack pnpm@9.15.9 install --frozen-lockfile` -> passed.
-- Root `build` and `typecheck` -> passed after final runtime changes.
-- Root `test` -> passed: Core 190 files / 1829 tests; Studio 58 files / 549 tests; CLI 41 files / 229 tests.
+- Root `build` and `typecheck` -> passed after final acceptance fixes.
+- Root `test` -> passed for Core, Studio, and CLI. Core reported 191 files / 1859 tests after the final two acceptance tests.
 - `verify:publish-manifests` -> passed for Core, CLI, and Studio.
-- Focused runtime/policy/health/pool/provider/PipelineRunner tests -> 6 files / 144 passed before final compatibility additions; final affected subsets also passed.
-- Focused CLI short-fiction tests -> 5 passed.
+- Final focused prompt/routing/resilient/verify subset -> 4 files / 52 tests passed; Core typecheck also passed.
+- Built `packages/core/dist` contains exactly three model-global prompt asset modules, and the compiled registry imports successfully.
 - `git diff --check` -> passed before handoff update; final staged diff check remains part of the commit gate.
-- Health reason and aggregate serialization tests confirm raw bearer/API-key values are not persisted or exposed. Added credential-shaped strings are explicit mock fixtures only.
+- Forbidden-path and added-line credential scans found zero matches. Routing-event tests confirm complete prompt text is absent.
 
 ## Blockers / Risks
 
-- No PR-03 blocker remains.
-- Health update serialization covers concurrent stores in one Node process; no OS-level cross-process lock is added.
-- Legacy model-only/base-URL overrides intentionally remain single-client compatibility paths; multi-backend selection requires an explicit logical route.
-- Codex/Grok credentials are skipped as unsupported, and Studio Agent stream remains out of scope until its later PR.
+- No PR-04 blocker remains.
+- Unknown endpoint/service/model combinations conservatively resolve to `none` with diagnostic source metadata; saving an explicit route `promptFamily` makes the choice persistent.
+- Studio Agent `streamSimple()` is not yet connected to this boundary; PR-08 must reuse the exported implementation and Grok history transform.
+- Prompt assets are TypeScript constants so the normal Core compiler and package include them without a separate copy step.
 
 ## Next Steps
 
-1. Create the atomic PR-03 commit `feat: add resilient backend failover`.
+1. Create the atomic PR-04 commit `feat: add model family global prompts`.
 2. Re-fetch `origin`, fast-forward local `master`, push only `origin/master`, and verify the remote SHA.
-3. Mark PR-03 complete in local pipeline state with the commit and validation evidence.
-4. Render PR-04 only, create `feature/model-continuity-pr04` from verified `master`, and assign a fourth, different implementation agent.
+3. Mark PR-04 complete in local pipeline state with the commit and validation evidence.
+4. Render PR-05 only, create `feature/model-continuity-pr05` from verified `master`, and assign a fifth, different implementation agent.
 
 ## Safety Notes
 

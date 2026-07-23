@@ -14,6 +14,10 @@ import {
 } from "./failover-policy.js";
 import type { ModelRoutingConfig } from "./model-routing.js";
 import {
+  resolveModelGlobalPrompt,
+  toModelGlobalPromptTrace,
+} from "./model-global-prompt.js";
+import {
   classifyProviderError,
   type ProviderError,
   type ProviderErrorCategory,
@@ -164,9 +168,19 @@ export class ResilientChatRuntime {
     options?: ChatCompletionOptions,
   ): Promise<LLMResponse> {
     throwIfRoutingCancelled(options?.signal, { logicalModelId: routeId });
-    const emitter = new RoutingEventEmitter(routeId, this.observer, this.now);
     const immutableMessages = snapshotMessages(messages);
     const resolution = await this.pool.resolve(routeId);
+    const promptResolution = this.resolveRoutePrompt(
+      resolution.route,
+      options?.modelGlobalPrompt,
+    );
+    const emitter = new RoutingEventEmitter(
+      routeId,
+      this.observer,
+      this.now,
+      undefined,
+      toModelGlobalPromptTrace(promptResolution),
+    );
     throwIfRoutingCancelled(options?.signal, { logicalModelId: routeId });
     const failures = resolution.skipped.map(skippedCandidateFailure);
     let switchFrom: { readonly backendId: string; readonly reason: ProviderErrorCategory } | undefined;
@@ -222,6 +236,7 @@ export class ResilientChatRuntime {
               ...options,
               onTextDelta,
               retry: false,
+              _modelGlobalPromptResolution: promptResolution,
               errorContext: {
                 backendId,
                 logicalModelId: routeId,
@@ -378,6 +393,23 @@ export class ResilientChatRuntime {
       ...client,
       _routingBackendId: backend.id,
     };
+  }
+
+  private resolveRoutePrompt(
+    route: Awaited<ReturnType<BackendPool["resolve"]>>["route"],
+    mode: ChatCompletionOptions["modelGlobalPrompt"],
+  ) {
+    const firstCandidate = route.candidates[0];
+    const firstBackend = firstCandidate
+      ? this.options.routing.backends.find((backend) => backend.id === firstCandidate.backendId)
+      : undefined;
+    return resolveModelGlobalPrompt({
+      configuredFamily: route.promptFamily,
+      endpoint: firstBackend?.baseUrl,
+      service: firstBackend?.service,
+      model: firstCandidate?.upstreamModelId,
+      mode,
+    });
   }
 }
 

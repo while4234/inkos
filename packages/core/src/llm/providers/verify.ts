@@ -91,7 +91,13 @@ export async function verifyService(
       configSource: "studio",
       stream: false,
     }));
-    await chatCompletion(client, checkModel, [{ role: "user", content: "hi" }], { maxTokens: 10 });
+    await chatCompletion(client, checkModel, [{ role: "user", content: "hi" }], {
+      maxTokens: 10,
+      retry: false,
+      // Connectivity verification must test the provider without creative
+      // model-adaptation instructions changing its narrow request contract.
+      modelGlobalPrompt: "disabled",
+    });
     return { recommendedTransport, probe: probeResult, chat: { ok: true, latencyMs: Date.now() - start } };
   } catch (error) {
     const providerError = classifyProviderError(error);

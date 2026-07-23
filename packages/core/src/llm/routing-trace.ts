@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ModelGlobalPromptTraceMetadata } from "./model-global-prompt.js";
 import type { ProviderErrorCategory } from "./provider-error.js";
 
 export const ROUTING_EVENT_TYPES = [
@@ -27,6 +28,7 @@ export interface RoutingEvent {
   readonly reason?: ProviderErrorCategory | "candidate_unavailable";
   readonly retryCount: number;
   readonly visibleOutput: boolean;
+  readonly modelGlobalPrompt?: ModelGlobalPromptTraceMetadata;
 }
 
 export type RoutingEventObserver = (event: RoutingEvent) => void | Promise<void>;
@@ -39,10 +41,14 @@ export class RoutingEventEmitter {
     private readonly observer?: RoutingEventObserver,
     private readonly now: () => number = Date.now,
     public readonly requestId = randomUUID(),
+    private readonly modelGlobalPrompt?: ModelGlobalPromptTraceMetadata,
   ) {}
 
   public async emit(
-    event: Omit<RoutingEvent, "eventId" | "requestId" | "timestamp" | "logicalModelId">,
+    event: Omit<
+      RoutingEvent,
+      "eventId" | "requestId" | "timestamp" | "logicalModelId" | "modelGlobalPrompt"
+    >,
   ): Promise<void> {
     if (!this.observer) return;
     const sequence = ++this.sequence;
@@ -51,6 +57,7 @@ export class RoutingEventEmitter {
       requestId: this.requestId,
       timestamp: new Date(this.now()).toISOString(),
       logicalModelId: this.logicalModelId,
+      ...(this.modelGlobalPrompt ? { modelGlobalPrompt: this.modelGlobalPrompt } : {}),
       ...event,
     };
     try {

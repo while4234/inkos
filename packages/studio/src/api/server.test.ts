@@ -844,7 +844,10 @@ describe("createStudioServer daemon lifecycle", () => {
       expect.anything(),
       "fresh-model",
       expect.any(Array),
-      expect.objectContaining({ maxTokens: expect.any(Number) }),
+      expect.objectContaining({
+        maxTokens: expect.any(Number),
+        modelGlobalPrompt: "disabled",
+      }),
     );
   });
 

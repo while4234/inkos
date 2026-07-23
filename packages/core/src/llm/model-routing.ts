@@ -46,10 +46,20 @@ export const LogicalModelCandidateSchema = z.object({
   upstreamModelId: z.string().min(1),
 }).strict();
 
+export const PromptFamilySchema = z.enum([
+  "gpt",
+  "grok",
+  "deepseek",
+  "none",
+  // Compatibility sentinel for routes migrated before prompt-family selection
+  // was strict. The runtime resolves it once from explicit service/model rules.
+  "generic",
+]);
+
 export const LogicalModelRouteSchema = z.object({
   id: StableIdSchema,
   displayName: z.string().min(1),
-  promptFamily: z.string().min(1).default("generic"),
+  promptFamily: PromptFamilySchema.default("generic"),
   enabled: z.boolean().default(true),
   candidates: z.array(LogicalModelCandidateSchema).min(1, "must contain at least one candidate"),
 }).strict();
@@ -142,6 +152,7 @@ export type CredentialRef = z.infer<typeof CredentialRefSchema>;
 export type BackendTransport = z.infer<typeof BackendTransportSchema>;
 export type BackendInstance = z.infer<typeof BackendInstanceSchema>;
 export type LogicalModelCandidate = z.infer<typeof LogicalModelCandidateSchema>;
+export type PromptFamily = z.infer<typeof PromptFamilySchema>;
 export type LogicalModelRoute = z.infer<typeof LogicalModelRouteSchema>;
 export type ModelRoutingConfig = z.infer<typeof ModelRoutingConfigSchema>;
 export type RouteLLMOverride = z.infer<typeof RouteLLMOverrideSchema>;

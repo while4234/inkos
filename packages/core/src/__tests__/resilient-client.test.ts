@@ -7,6 +7,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FileBackendHealthStore } from "../llm/backend-health-store.js";
 import { CredentialResolver } from "../llm/credentials/index.js";
 import type { ModelRoutingConfig } from "../llm/model-routing.js";
+import type { PromptFamily } from "../llm/model-routing.js";
+import {
+  MODEL_GLOBAL_PROMPT_ASSETS,
+  countModelGlobalPromptMarkers,
+} from "../llm/model-global-prompt.js";
 import { classifyProviderError, ProviderError } from "../llm/provider-error.js";
 import { chatCompletion, type LLMClient } from "../llm/provider.js";
 import {
@@ -152,6 +157,56 @@ describe("ResilientChatRuntime", () => {
       toBackendId: "backend-b",
       reason: "quota",
     });
+  });
+
+  it("reuses one route prompt family/revision across A→B failover and traces metadata only", async () => {
+    const backendA = await createMockBackend((_request, response) => {
+      sendJson(response, 402, {
+        error: { code: "insufficient_quota", message: "quota exhausted" },
+      });
+    });
+    const backendB = await createMockBackend((_request, response) => {
+      sendCompletion(response, "from-b", 7);
+    });
+    const events: RoutingEvent[] = [];
+    const { runtime } = await createRuntime(backendA, backendB, {
+      promptFamily: "gpt",
+      observer: (event) => events.push(event),
+    });
+    const messages = [
+      { role: "system" as const, content: "role prompt\n\nproject prompt pack" },
+      { role: "user" as const, content: "write chapter" },
+    ];
+    const original = structuredClone(messages);
+
+    await runtime.complete("route-main", messages);
+
+    const firstMessages = backendA.requests[0]?.body.messages;
+    const secondMessages = backendB.requests[0]?.body.messages;
+    expect(secondMessages).toEqual(firstMessages);
+    expect(firstMessages).toEqual([
+      {
+        role: "system",
+        content: expect.stringMatching(
+          /^<!-- inkos:model-global-prompt[\s\S]*\n\nrole prompt\n\nproject prompt pack$/,
+        ),
+      },
+      { role: "user", content: "write chapter" },
+    ]);
+    const system = String((firstMessages as Array<{ content: string }>)[0]?.content);
+    expect(countModelGlobalPromptMarkers(system)).toBe(1);
+    expect(messages).toEqual(original);
+    expect(events).not.toHaveLength(0);
+    for (const event of events) {
+      expect(event.modelGlobalPrompt).toEqual({
+        family: "gpt",
+        assetId: "inkos:model-global-prompt:gpt",
+        revision: 1,
+        enabled: true,
+        source: "explicit",
+      });
+      expect(JSON.stringify(event)).not.toContain(MODEL_GLOBAL_PROMPT_ASSETS.gpt.text);
+    }
   });
 
   it("uses bounded local retries and injectable time before switching", async () => {
@@ -364,6 +419,7 @@ async function createRuntime(
     readonly invoke?: ConstructorParameters<typeof ResilientChatRuntime>[0]["invoke"];
     readonly stream?: boolean;
     readonly singleCandidate?: boolean;
+    readonly promptFamily?: PromptFamily;
   } = {},
 ): Promise<{ runtime: ResilientChatRuntime; healthStore: FileBackendHealthStore }> {
   const projectRoot = await mkdtemp(join(tmpdir(), "inkos-resilient-runtime-"));
@@ -374,6 +430,7 @@ async function createRuntime(
     backendB.baseUrl,
     options.stream ?? false,
     options.singleCandidate ?? false,
+    options.promptFamily ?? "generic",
   );
   const credentials = new CredentialResolver([{
     kind: "api_key" as const,
@@ -410,6 +467,7 @@ function createRouting(
   baseUrlB: string,
   stream: boolean,
   singleCandidate: boolean,
+  promptFamily: PromptFamily,
 ): ModelRoutingConfig {
   return {
     version: 1,
@@ -442,7 +500,7 @@ function createRouting(
     routes: [{
       id: "route-main",
       displayName: "Main",
-      promptFamily: "generic",
+      promptFamily,
       enabled: true,
       candidates: singleCandidate
         ? [{ backendId: "backend-a", upstreamModelId: "model-a" }]

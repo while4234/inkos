@@ -506,7 +506,7 @@ describe("PipelineRunner", () => {
       routes: [{
         id: "route-default",
         displayName: "Default",
-        promptFamily: "generic",
+        promptFamily: "generic" as const,
         enabled: true,
         candidates: [{
           backendId: "backend-base",

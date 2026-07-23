@@ -49,6 +49,37 @@ OAuth access/refresh tokens are outside this migration. They must never be
 placed in `.inkos/secrets.json`, `inkos.json`, logs, API payloads, or project
 fixtures.
 
+## Prompt layers and model families
+
+InkOS composes prompts in three separate layers:
+
+1. The **model-global prompt** is provider/model adaptation owned by the logical
+   route. `promptFamily` accepts `gpt`, `grok`, `deepseek`, or `none`. It is
+   injected once at the final `chatCompletion()` transport boundary.
+2. The **Agent/role system prompt** describes the current authoring role and
+   task. It remains after the model-global prompt and is never replaced by it.
+3. A **project prompt pack** is user/project content. Its order and text remain
+   part of the role/task context.
+
+Routes migrated before strict family selection may still contain `generic`.
+InkOS resolves that compatibility sentinel deterministically from a recognized
+official endpoint, then an explicit service mapping, then a normalized model
+ID. Unknown models use `none` and return diagnostic fallback metadata; save an
+explicit `promptFamily` on the route to make the choice persistent.
+
+Business generation defaults to model-global prompt mode `auto`. Narrow
+connectivity/provider verification calls pass
+`modelGlobalPrompt: "disabled"` explicitly. Disabling strips any recognized
+InkOS model-global prefix but does not alter role prompts, prompt packs, JSON
+schema instructions, or user messages.
+
+Each asset has a stable non-secret ID, numeric revision, and boundary marker.
+Retry and failover attempts reuse the family/revision resolved for the logical
+route, so changing backend URL or provider transport cannot stack or change
+the prompt. Routing observers receive only family, asset ID/revision, enabled
+state, and fallback source; the full asset text is never written to trace
+events.
+
 ## Runtime failover and backend health
 
 Production `PipelineRunner` calls use the configured default logical route.

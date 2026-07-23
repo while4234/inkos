@@ -4,6 +4,7 @@ import type {
   BackendInstance,
   CredentialMetadata,
   LogicalModelRoute,
+  PromptFamily,
 } from "./model-routing.js";
 import {
   MODEL_ROUTING_SCHEMA_VERSION,
@@ -382,7 +383,7 @@ function serviceIdentity(service: ServiceEntry): string {
     : service.service;
 }
 
-function inferPromptFamily(model: string): string {
+function inferPromptFamily(model: string): PromptFamily {
   const normalized = model.toLowerCase();
   if (normalized.includes("grok")) return "grok";
   if (normalized.includes("gpt") || normalized.includes("codex")) return "gpt";

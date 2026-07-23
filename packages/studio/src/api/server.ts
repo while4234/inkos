@@ -2631,7 +2631,11 @@ async function probeServiceCapabilities(args: {
           // A connectivity probe wants a fast pass/fail — never the transient
           // retry+backoff, which would multiply the time when the upstream is
           // rate-limiting (and make the diagnostics page hang).
-          chatCompletion(client, model, [{ role: "user", content: "Reply with OK only." }], { maxTokens: 16, retry: false }),
+          chatCompletion(client, model, [{ role: "user", content: "Reply with OK only." }], {
+            maxTokens: 16,
+            retry: false,
+            modelGlobalPrompt: "disabled",
+          }),
           SERVICE_CHAT_PROBE_TIMEOUT_MS,
           "service connection test",
           lang,

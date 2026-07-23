@@ -33,6 +33,7 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - 2026-07-23 PR-01 acceptance completed: added the logical-model routing foundation, atomic credential migration, compatibility writers, masked Studio secret reads, and a bounded CLI doctor connectivity probe. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1781, Studio 549, CLI 229 tests).
 - 2026-07-23 PR-02 acceptance completed: added structured provider errors, conservative classification, bounded Retry-After parsing, cancellation and visible-output semantics, safe display/serialization, and shared Core/CLI/Studio compatibility adapters. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1811, Studio 549, CLI 229 tests).
 - 2026-07-24 PR-03 acceptance completed: added route-aware API-key failover, bounded per-backend retries, persistent backend health, safe aggregate attempts, routing events, PipelineRunner/short-fiction integration, and legacy override compatibility. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1829, Studio 549, CLI 229 tests).
+- 2026-07-24 PR-04 acceptance completed: added explicit model-family routing, three auditable model-adaptation prompt assets, revision-safe/idempotent final-boundary injection, retry/failover metadata, probe opt-out, and a reusable Grok history transform. Full pnpm 9.15.9 frozen install/build/typecheck/test/publish-manifest validation passed (Core 191 files / 1859 tests after the final acceptance fixes; Studio and CLI suites passed).
 
 ## Model Continuity Pipeline
 
@@ -50,6 +51,10 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - PR-03 commit subject: `feat: add resilient backend failover`.
 - PR-03 security review: `.inkos/backend-health.json` remains ignored runtime state; persisted reasons, aggregate errors, and routing events are bounded and credential-safe; all credential-shaped additions are mock fixtures or redaction rules.
 - PR-03 scope boundary: only API-key/OpenAI-compatible production routing is enabled. Codex/Grok credentials, Studio Agent streaming, model-family prompts, UI management, and cost/trace unification remain later PR work.
+- PR-04 branch: `feature/model-continuity-pr04`.
+- PR-04 commit subject: `feat: add model family global prompts`.
+- PR-04 security review: routing events contain only family, asset ID/revision, enabled state, and selection source; prompt text, credentials, Authorization data, and pipeline/runtime state stay out of traces and Git.
+- PR-04 scope boundary: production `chatCompletion()` uses the shared injection boundary, while Studio Agent `streamSimple()` intentionally remains for PR-08. The Grok structured-history transform is exported now and is consumed by that later Agent integration.
 
 ## Rollback Notes
 

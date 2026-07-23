@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { verifyService } from "../llm/providers/verify.js";
+import * as llmProvider from "../llm/provider.js";
 
 describe("verifyService (B9)", () => {
   const originalFetch = global.fetch;
@@ -26,6 +27,30 @@ describe("verifyService (B9)", () => {
     expect(result.chat).not.toBeNull();
     expect(typeof result.chat?.ok).toBe("boolean");
     expect(result.chat?.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("provider connectivity chat explicitly disables model-global prompting", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "gpt-4o" }] }),
+    } as any) as typeof fetch;
+    const chat = vi.spyOn(llmProvider, "chatCompletion").mockResolvedValue({
+      content: "ok",
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+
+    const result = await verifyService("openai", "sk-test");
+
+    expect(result.chat?.ok).toBe(true);
+    expect(chat).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      [{ role: "user", content: "hi" }],
+      expect.objectContaining({
+        modelGlobalPrompt: "disabled",
+        retry: false,
+      }),
+    );
   });
 
   it("probe 401 → probe.ok=false, error 带 401", async () => {

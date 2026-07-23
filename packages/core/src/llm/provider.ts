@@ -22,6 +22,13 @@ import {
   providerErrorFromResponseBody,
   type ProviderErrorRouteContext,
 } from "./provider-error.js";
+import {
+  applyModelGlobalPromptToLLMMessages,
+  resolveModelGlobalPrompt,
+  transformGrokHistory,
+  type ModelGlobalPromptMode,
+  type ModelGlobalPromptResolution,
+} from "./model-global-prompt.js";
 
 
 // === Streaming Monitor Types ===
@@ -132,6 +139,13 @@ export interface ChatCompletionOptions {
   // Diagnostics / connectivity checks want a fast pass-or-fail — set false to
   // skip the transient 502/503/429 retry+backoff (e.g. the doctor probe).
   readonly retry?: boolean;
+  /** Model-adaptation prompt is enabled for business generation by default. */
+  readonly modelGlobalPrompt?: ModelGlobalPromptMode;
+  /**
+   * Internal route snapshot. Route runtimes resolve this once so every retry
+   * and backend candidate uses the same family and asset revision.
+   */
+  readonly _modelGlobalPromptResolution?: ModelGlobalPromptResolution;
 }
 
 export interface LLMRouteRuntimeDelegate {
@@ -1166,6 +1180,20 @@ export async function chatCompletion(
   if (client._routeRuntime) {
     return client._routeRuntime.complete(model, messages, options);
   }
+  const promptResolution = options?._modelGlobalPromptResolution
+    ?? resolveModelGlobalPrompt({
+      endpoint: client._piModel?.baseUrl,
+      service: client.service,
+      model,
+      mode: options?.modelGlobalPrompt,
+    });
+  const history = promptResolution.family === "grok"
+    ? transformGrokHistory(messages)
+    : messages;
+  const preparedMessages = applyModelGlobalPromptToLLMMessages(
+    history as ReadonlyArray<LLMMessage>,
+    promptResolution,
+  ).messages;
   // C1 (v2.0.0)：删除 maxTokensCap 机制。per-call 显式传的 maxTokens 永远不被裁剪。
   const resolved = {
     temperature: clampTemperatureForModel(
@@ -1188,14 +1216,14 @@ export async function chatCompletion(
         assertWithinContextWindow({
           piModel: resolvePiModel(client, model),
           model,
-          estimatedInputTokens: estimateLLMMessagesTokens(messages),
+          estimatedInputTokens: estimateLLMMessagesTokens(preparedMessages),
           reservedOutputTokens: resolved.maxTokens,
         });
         if (shouldUseNativeCustomTransport(client)) {
           return chatCompletionViaCustomOpenAICompatible(
             client,
             model,
-            messages,
+            preparedMessages,
             resolved,
             onStreamProgress,
             onTextDelta,
@@ -1207,7 +1235,7 @@ export async function chatCompletion(
         return chatCompletionViaPiAi(
           client,
           model,
-          messages,
+          preparedMessages,
           resolved,
           onStreamProgress,
           onTextDelta,

@@ -45,6 +45,21 @@ function validRouting() {
 }
 
 describe("ModelRoutingConfigSchema", () => {
+  it.each(["gpt", "grok", "deepseek", "none"] as const)(
+    "accepts the explicit %s prompt family",
+    (family) => {
+      const routing = validRouting();
+      routing.routes[0]!.promptFamily = family;
+      expect(ModelRoutingConfigSchema.parse(routing).routes[0]?.promptFamily).toBe(family);
+    },
+  );
+
+  it("rejects an unregistered prompt family", () => {
+    const routing = validRouting();
+    routing.routes[0]!.promptFamily = "mystery";
+    expect(ModelRoutingConfigSchema.safeParse(routing).success).toBe(false);
+  });
+
   it("parses a normalized graph and preserves candidate order", () => {
     const routing = validRouting();
     routing.routes[0]!.candidates.push({

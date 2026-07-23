@@ -4,6 +4,7 @@ import type {
   ChatAttachmentPayload,
   ChatSessionKind,
   ChatStore,
+  Message,
   MessageActions,
   SendMessageOptions,
   SessionResponse,
@@ -614,14 +615,53 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           })),
         }));
       };
+      const withResponseRouting = (message: Message): Message => data.routing
+        ? {
+            ...message,
+            routingResult: data.routing.summary,
+            ...(data.routing.interrupted && data.routing.message
+              ? { routingInterruption: data.routing.message }
+              : {}),
+          }
+        : message;
+      const attachResponseRouting = () => {
+        if (!data.routing) return;
+        set((state) => ({
+          sessions: updateSession(state.sessions, sessionId, (runtime) => ({
+            messages: runtime.messages.map((message) => (
+              message.timestamp === streamTs && message.role === "assistant"
+                ? withResponseRouting(message)
+                : message
+            )),
+          })),
+        }));
+      };
 
       if (data.error) {
         const errorMessage = extractErrorMessage(data.error);
-        if (hasStream) {
+        if (data.routing?.interrupted && hasStream) {
+          // Material text, forwarded thinking, or a tool-call boundary may be
+          // the only visible output. Preserve the current stream message and
+          // attach the non-resumable interruption state instead of replacing
+          // it with a generic error bubble.
+          attachResponseRouting();
+        } else if (data.routing?.interrupted) {
+          const message = withResponseRouting({
+            role: "assistant",
+            content: "",
+            timestamp: streamTs,
+          });
+          set((state) => ({
+            sessions: updateSession(state.sessions, sessionId, (runtime) => ({
+              messages: [...runtime.messages, message],
+            })),
+          }));
+        } else if (hasStream) {
           get().replaceStreamWithError(sessionId, streamTs, errorMessage);
         } else {
           get().addErrorMessage(sessionId, errorMessage);
         }
+        if (!data.routing?.interrupted) attachResponseRouting();
         // 用户中途主动停止（abortSession）会先把 isChatStreaming 置回 false：
         // 那不算失败，不记录重试。
         if (get().sessions[sessionId]?.isChatStreaming) rememberFailedSend();
@@ -629,13 +669,14 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         if (hasStream) {
           get().finalizeStream(sessionId, streamTs, finalContent, toolCall);
           attachResponseTools();
+          attachResponseRouting();
         } else {
-          const message = withToolExecutions({
+          const message = withResponseRouting(withToolExecutions({
             role: "assistant",
             content: finalContent,
             timestamp: Date.now(),
             toolCall,
-          }, responseToolExecutions);
+          }, responseToolExecutions));
           set((state) => ({
             sessions: updateSession(state.sessions, sessionId, (runtime) => ({
               messages: [
@@ -649,13 +690,14 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         if (hasStream) {
           get().finalizeStream(sessionId, streamTs, "", toolCall);
           attachResponseTools();
+          attachResponseRouting();
         } else {
-          const message = withToolExecutions({
+          const message = withResponseRouting(withToolExecutions({
             role: "assistant",
             content: "",
             timestamp: Date.now(),
             toolCall,
-          }, responseToolExecutions);
+          }, responseToolExecutions));
           set((state) => ({
             sessions: updateSession(state.sessions, sessionId, (runtime) => ({
               messages: [...runtime.messages, message],
@@ -665,6 +707,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       } else {
         if (hasStream) {
           get().finalizeStream(sessionId, streamTs, "", toolCall);
+          attachResponseRouting();
         } else {
           const emptyMessage = tr(
             "模型未返回文本内容。请检查协议类型（chat/responses）、流式开关或上游服务兼容性。",

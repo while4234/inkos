@@ -226,6 +226,7 @@ export function deserializeMessages(
         content: message.content,
         thinking: message.thinking,
         toolExecutions,
+        routingResult: message.routingResult,
         timestamp: message.timestamp,
         parts: parts.length > 0 ? parts : undefined,
       };

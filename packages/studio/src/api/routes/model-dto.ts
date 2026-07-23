@@ -144,10 +144,12 @@ export function routingActivityEventDTO(
     logicalModelDisplayName: route?.displayName ?? event.logicalModelId,
     phase: event.phase,
     ...(event.backendId ? { backendId: event.backendId } : {}),
+    ...(event.upstreamModelId ? { upstreamModelId: event.upstreamModelId } : {}),
     ...(event.fromBackendId ? { fromBackendId: event.fromBackendId } : {}),
     ...(event.toBackendId ? { toBackendId: event.toBackendId } : {}),
     ...(event.reason ? { reason: event.reason } : {}),
     retryCount: event.retryCount,
+    visibleOutput: event.visibleOutput,
     ...(context && Object.keys(context).length > 0 ? { context } : {}),
   };
 }

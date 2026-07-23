@@ -255,6 +255,24 @@ manual probe or reset; Studio does not describe those states as short
 automatic cooldowns.
 
 Codex credential import and Grok OAuth connection, refresh, and routing are available here.
-Studio Agent chat does
-not claim automatic failover yet; production pipelines are the routed path in
-this release.
+
+## Studio Agent streaming continuity
+
+Studio Agent chat uses the same logical route, credential resolver, structured
+provider errors, health state, prompt-family revision, Codex Responses
+transport, and Grok history conversion as production pipelines. A concrete
+service/model represented by a route resolves that route; an unmatched
+explicit selection remains on the legacy direct path.
+
+Before material output, bounded metadata is held per attempt and shared retry
+and switch policy applies. The replay boundary closes on the first non-empty
+text delta, forwarded thinking/reasoning delta, or any tool-call
+start/delta/end event. After that boundary InkOS never retries or switches:
+Studio preserves partial text, thinking, and tool state, marks the turn as
+interrupted, and displays the logical model plus attempted backend/model.
+Credentials, raw provider bodies, and complete prompts are excluded.
+
+Routing summaries persist in the session transcript and restore safely.
+Replayed SSE activity is deduplicated by event ID. Cross-backend
+checkpoint/resume, continuation from partial output, and replay of a partially
+emitted tool call are intentionally not implemented.

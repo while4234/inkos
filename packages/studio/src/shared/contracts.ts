@@ -274,6 +274,8 @@ export type RoutingActivityType =
 
 export interface RoutingActivityContextDTO {
   readonly sessionId?: string;
+  /** Distinguishes the surface Agent stream from nested chat tools/pipelines. */
+  readonly scope?: "agent";
   readonly taskId?: string;
   readonly bookId?: string;
   readonly chapter?: number;
@@ -289,10 +291,13 @@ export interface RoutingActivityEventDTO {
   readonly logicalModelDisplayName: string;
   readonly phase: "selection" | "request" | "retry" | "complete";
   readonly backendId?: string;
+  readonly upstreamModelId?: string;
   readonly fromBackendId?: string;
   readonly toBackendId?: string;
   readonly reason?: string;
   readonly retryCount: number;
+  /** Present on current routing events; absent on pre-PR-08 persisted snapshots. */
+  readonly visibleOutput?: boolean;
   readonly context?: RoutingActivityContextDTO;
 }
 
@@ -311,11 +316,13 @@ export interface StudioRoutingSummary {
   readonly logicalModelId: string | null;
   readonly logicalModelDisplayName: string | null;
   readonly activeBackendId: string | null;
+  readonly activeModelId?: string | null;
   readonly retryCount: number;
   readonly switches: ReadonlyArray<RoutingActivityEventDTO>;
   /** Bounded replay guard for SSE reconnects and task snapshot restores. */
   readonly recentEventIds?: ReadonlyArray<string>;
   readonly lastEventAt: string | null;
+  readonly terminalState?: "succeeded" | "failed" | "interrupted" | "exhausted";
 }
 
 export interface ModelRoutingValidationIssueDTO {

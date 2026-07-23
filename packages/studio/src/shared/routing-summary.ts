@@ -32,9 +32,15 @@ export function reduceRoutingSummary(
     logicalModelId: event.logicalModelId,
     logicalModelDisplayName: event.logicalModelDisplayName,
     activeBackendId: event.toBackendId ?? event.backendId ?? current?.activeBackendId ?? null,
+    activeModelId: event.upstreamModelId ?? current?.activeModelId ?? null,
     retryCount: (current?.retryCount ?? 0) + (event.type === "local_retry" ? 1 : 0),
     switches,
     recentEventIds: [...recentEventIds, event.eventId].slice(-MAX_SUMMARY_EVENT_IDS),
     lastEventAt: event.timestamp,
+    terminalState: event.type === "failed"
+      ? event.visibleOutput ? "interrupted" : "failed"
+      : event.type === "succeeded" || event.type === "exhausted"
+        ? event.type
+        : current?.terminalState,
   };
 }

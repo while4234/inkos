@@ -4,10 +4,11 @@ import {
   BookSessionSchema,
   type BookSession,
   type InteractionMessage,
+  type AgentRoutingResult,
   type ToolExecution,
   type PlayMode,
 } from "./session.js";
-import type { MessageEvent, SessionKind, TranscriptEvent } from "./session-transcript-schema.js";
+import type { MessageEvent, RoutingSummaryEvent, SessionKind, TranscriptEvent } from "./session-transcript-schema.js";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
@@ -339,7 +340,11 @@ export function adaptRestoredAgentMessagesForModel(
     : filtered;
 }
 
-export function committedMessageEvents(events: TranscriptEvent[], sessionKind?: SessionKind): MessageEvent[] {
+export function committedMessageEvents(
+  events: TranscriptEvent[],
+  sessionKind?: SessionKind,
+  options: { readonly includeInterrupted?: boolean } = {},
+): MessageEvent[] {
   const requestKinds = new Map(
     events
       .filter((event) => event.type === "request_started")
@@ -355,6 +360,26 @@ export function committedMessageEvents(events: TranscriptEvent[], sessionKind?: 
       })
       .map((event) => event.requestId),
   );
+  if (options.includeInterrupted) {
+    const failed = new Set(
+      events
+        .filter((event) => event.type === "request_failed")
+        .map((event) => event.requestId),
+    );
+    events
+      .filter((event): event is RoutingSummaryEvent => event.type === "routing_summary")
+      .filter((event) =>
+        event.terminalState === "interrupted" && failed.has(event.requestId)
+      )
+      .forEach((event) => {
+        if (!sessionKind) {
+          committed.add(event.requestId);
+          return;
+        }
+        const kind = requestKinds.get(event.requestId);
+        if (kind === undefined || kind === sessionKind) committed.add(event.requestId);
+      });
+  }
 
   return events
     .filter((event): event is MessageEvent => event.type === "message" && committed.has(event.requestId))
@@ -546,7 +571,7 @@ function messageEventToInteractionMessage(
   event: MessageEvent,
   restoredToolExecutions?: ToolExecution[],
   restoredThinking?: ReadonlyArray<string>,
-  options: { suppressAssistantText?: boolean } = {},
+  options: { suppressAssistantText?: boolean; allowThinkingOnly?: boolean } = {},
 ): InteractionMessage | null {
   const raw = event.message as Record<string, unknown>;
   if (!isObject(raw)) return null;
@@ -570,7 +595,7 @@ function messageEventToInteractionMessage(
       ? restoredToolExecutions
       : event.legacyDisplay?.toolExecutions as ToolExecution[] | undefined;
     if (!content && !thinking && !toolExecutions?.length) return null;
-    if (!content && !toolExecutions?.length) return null;
+    if (!content && !toolExecutions?.length && !options.allowThinkingOnly) return null;
     return {
       role: "assistant",
       content,
@@ -588,7 +613,10 @@ function messageEventToInteractionMessage(
   return null;
 }
 
-function messageEventsToInteractionMessages(events: MessageEvent[]): InteractionMessage[] {
+function messageEventsToInteractionMessages(
+  events: MessageEvent[],
+  routingResults: ReadonlyMap<string, AgentRoutingResult> = new Map(),
+): InteractionMessage[] {
   type RestoredToolCall = {
     id: string;
     tool: string;
@@ -625,6 +653,15 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
   let pendingToolExecutions: ToolExecution[] = [];
   let pendingThinking: string[] = [];
   let activeRequestId: string | null = null;
+  const withRoutingResult = (
+    message: InteractionMessage,
+    requestId: string | null,
+  ): InteractionMessage => {
+    const routingResult = requestId ? routingResults.get(requestId) : undefined;
+    return message.role === "assistant" && routingResult
+      ? { ...message, routingResult }
+      : message;
+  };
 
   const clearPending = () => {
     pendingToolExecutions = [];
@@ -644,7 +681,7 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
         ],
       };
     } else {
-      messages.push({
+      messages.push(withRoutingResult({
         role: "assistant",
         content: "",
         ...(thinking ? { thinking } : {}),
@@ -653,7 +690,7 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
           (latest, execution) => Math.max(latest, execution.completedAt ?? execution.startedAt),
           0,
         ),
-      });
+      }, activeRequestId));
     }
     clearPending();
   };
@@ -768,10 +805,13 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
         event,
         pendingToolExecutions.length > 0 ? pendingToolExecutions : undefined,
         pendingThinking.length > 0 ? pendingThinking : undefined,
-        { suppressAssistantText: hasCompletedPlayTool(pendingToolExecutions) },
+        {
+          suppressAssistantText: hasCompletedPlayTool(pendingToolExecutions),
+          allowThinkingOnly: routingResults.get(event.requestId)?.terminalState === "interrupted",
+        },
       );
       if (message) {
-        messages.push(message);
+        messages.push(withRoutingResult(message, event.requestId));
         clearPending();
       } else if (hasToolCallContent(raw) && currentThinking) {
         pendingThinking.push(currentThinking);
@@ -786,8 +826,13 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
     }
 
     clearPending();
-    const message = messageEventToInteractionMessage(event);
-    if (message) messages.push(message);
+    const message = messageEventToInteractionMessage(
+      event,
+      undefined,
+      undefined,
+      { allowThinkingOnly: routingResults.get(event.requestId)?.terminalState === "interrupted" },
+    );
+    if (message) messages.push(withRoutingResult(message, event.requestId));
   }
 
   flushPendingToolExecutions();
@@ -829,7 +874,26 @@ export async function deriveBookSessionFromTranscript(
     updatedAt = Math.max(updatedAt, event.updatedAt);
   }
 
-  const messages = messageEventsToInteractionMessages(committedMessageEvents(events));
+  const routingResults = new Map(
+    events
+      .filter((event): event is RoutingSummaryEvent => event.type === "routing_summary")
+      .map((event) => {
+        const {
+          type: _type,
+          version: _version,
+          sessionId: _sessionId,
+          requestId,
+          seq: _seq,
+          timestamp: _timestamp,
+          ...result
+        } = event;
+        return [requestId, result] as const;
+      }),
+  );
+  const messages = messageEventsToInteractionMessages(
+    committedMessageEvents(events, undefined, { includeInterrupted: true }),
+    routingResults,
+  );
 
   if (title === null) {
     title = firstUserMessageTitle(messages);

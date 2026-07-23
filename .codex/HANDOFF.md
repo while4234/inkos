@@ -1,65 +1,80 @@
 # Project Handoff
 
-Last updated: 2026-07-24 03:52 CST
-Project root: D:\lnkos
-Branch: `feature/model-continuity-pr07`
-Status: accepted_uncommitted
+Last updated: 2026-07-24 05:03 CST
+Project root: `D:\lnkos`
+Branch: `feature/model-continuity-pr08`
+Status: acceptance_passed_uncommitted
 
 ## Current Goal
 
-Accept and deliver PR-07 of `model-continuity-p0`: secure Grok OAuth/OIDC, multi-account user credentials, refresh, transport, Studio management, and shared-runtime routing.
+Accept and deliver PR-08 of `model-continuity-p0`: route Studio Agent streaming
+through the shared continuity runtime with a safe material-output boundary,
+visible routing state, and refresh-compatible partial interruption history.
 
 ## Current Position
 
-- Branch HEAD remains the delivered PR-06 base `bcaa9c05`; PR-07 passed main-agent acceptance but is not yet committed or pushed.
-- The PR-07 implementation agent did not mutate pipeline state or Git history.
-- Intended atomic subject: `feat: add grok oauth credentials`.
+- Branch HEAD is the delivered PR-07 base `a6e00520`; PR-08 is uncommitted.
+- The independent PR-08 implementation agent did not commit, push, or mutate
+  pipeline state; the main-agent audit and acceptance gates have passed.
+- Intended atomic subject: `feat: route studio agent streams`.
 
 ## Recent Actions
 
-- Added fail-closed production configuration, trusted same-origin OIDC discovery, redirect blocking, bounded responses, PKCE/state/nonce, JWKS signature and claim validation, and isolated single-use login sessions.
-- Added exact `127.0.0.1` loopback handling, fixed-port conflict/timeout errors, strict callback URL validation, and a pending-session-bound paste fallback.
-- Added atomic restricted user-level multi-account storage, active selection, stable route references, cross-store refresh locking/single-flight, rotated-token persistence, and `auth_required` status.
-- Added the Grok bearer chat/SSE transport and connected it to the existing credential resolver, backend pool, model-global prompt/history boundary, ProviderError handling, health, and route failover.
-- Added Studio configuration/status, login/callback/paste, active/reconnect/delete, and Grok backend management; browser APIs expose safe account status only.
-- Main acceptance fixed automatic callback polling, terminal session/state cleanup, callback rollback, cross-process non-rotating refresh generations, abort-safe single-flight ownership, `auth_required` marking after failed forced refresh, stricter loopback requests, and RS256/JWKS claim verification evidence.
-- Updated `MODEL_ROUTING.md`, both READMEs, `GIT_NOTES.md`, and focused Core/Studio tests.
-
-## Changed / Relevant Files
-
-- `packages/core/src/llm/credentials/grok-oauth.ts`: OIDC client, login sessions, loopback helper, account store, refresh, credential provider.
-- `packages/core/src/llm/grok-chat-transport.ts`: bearer request shaping, SSE, usage, cancellation, one forced auth refresh.
-- `packages/core/src/llm/{backend-pool,provider,resilient-client}.ts`: unified runtime integration.
-- `packages/core/src/__tests__/{grok-oauth,grok-chat-transport,resilient-client,backend-pool}.test.ts`: AC evidence.
-- `packages/studio/src/api/routes/{model-auth,model-backends,model-dto,model-management}.ts`: safe management APIs.
-- `packages/studio/src/pages/ModelRoutingPage.tsx`, `shared/contracts.ts`: Connect Grok UI and contracts.
-- `MODEL_ROUTING.md`, `README.md`, `README.en.md`, `GIT_NOTES.md`: configuration, security, lifecycle, troubleshooting, and scope.
+- Added `AgentRouteRuntime`, which reuses route resolution, credential refresh,
+  health, structured error policy, model-family prompts, Codex Responses, and
+  Grok history conversion for pi Agent streams.
+- Added bounded pre-output metadata buffering and a material boundary covering
+  text, forwarded thinking/reasoning, and every tool-call phase. Post-boundary
+  failures cannot retry or switch.
+- Added a per-turn, secret-free backend/model pin. The first material event
+  (including material found only in the terminal `done` message) locks the
+  selected candidate across all later pi streams in that Agent turn. A locked
+  candidate failure interrupts the turn and never re-enters another backend.
+- Added route-only Agent sessions, secret-free revision cache identity,
+  request-current runtime binding, per-candidate context guards, safe transcript
+  summaries, and interrupted partial text/thinking restoration.
+- Routed `/api/v1/agent` through logical routes when configured while preserving
+  unmatched explicit legacy overrides.
+- Added scoped `routing:event` SSE handling, reconnect dedupe, exact current-turn
+  attribution, response summary attachment, and distinct switch/interruption UI.
+- Updated `MODEL_ROUTING.md`, `README.md`, and `GIT_NOTES.md`.
 
 ## Validation
 
-- Focused Core Grok/OAuth transport: 18 tests passed; focused Studio management: 10 tests passed. Agent-owned runtime-focused coverage also passed in the full suite.
-- Core full: 195 files / 1895 tests passed.
-- Studio full: 63 files / 569 tests passed.
-- CLI full: 41 files / 229 tests passed.
-- Core, Studio, and CLI build/typecheck passed (Studio build emitted only the existing large-chunk warning).
-- Canonical pnpm 9.15.9 frozen install and publish-manifest verification passed.
-- Repository-external Studio browser smoke passed in Chinese and English at desktop and 375×812: exact missing OAuth fields, disabled login, no Grok/OIDC request, no horizontal overflow, console warning/error, token/Authorization text, or local path.
-- Exact canonical pnpm 9.15.9 frozen install, root build/typecheck/test, and publish-manifest gates passed.
+- Core typecheck/build passed.
+- Full Core suite: 197 files / 1,920 tests passed.
+- Agent route runtime focused suite: 23 tests passed, including A pre-output
+  failover to B, B material output, A health recovery, and B-only next-stream
+  interruption.
+- Agent route runtime + Agent session focused suites: 66 tests passed.
+- Agent session cache/routing: 43 tests passed.
+- Interrupted transcript restore: 1 test passed (partial text and thinking-only).
+- Studio typecheck and client/server build passed (existing chunk-size warning).
+- Full Studio suite: 64 files / 578 tests passed.
+- Studio route-selection/server focused tests: 3 passed.
+- Studio routing store/banner tests: 9 passed.
+- Interrupted thinking-only/tool-only action tests: 2 passed.
+- Full CLI suite: 41 files / 229 tests passed.
+- Repository-level pnpm 9.15.9 frozen install, build, typecheck, test, and
+  publish-manifest verification passed.
+- Repository-external Studio browser smoke loaded the English empty-project
+  workbench and model configuration page at `#/services`; the route-management
+  entry was visible and the browser reported no console errors or warnings.
+- `git diff --check` passed; changed/untracked path review found no runtime
+  content or pipeline-state files. Credential-pattern scan found only explicit
+  mock token/header fixtures used by redaction and refresh tests.
 
 ## Blockers / Risks
 
 - No known implementation blocker.
-- No real Grok login, token refresh, or model request was executed; production issuer/client/redirect values are intentionally absent and must be supplied by the operator.
-- Default ID-token verification currently accepts RS256 JWKS keys; a production issuer using another signing algorithm will fail closed until explicitly supported and tested.
-- Studio Agent streaming remains PR-08; unified usage/cost trace remains PR-09.
+- No real LLM, Codex, Grok, OAuth, or refresh request was executed.
+- Cross-backend checkpoint/resume and continuation from partial output are
+  explicitly unsupported.
+- PR-09 still owns unified usage/cost trace and recovery observability.
 
 ## Next Steps
 
-1. Run final diff/forbidden-path/fixture-secret scans and `git diff --check`.
-2. Create the atomic PR-07 commit, fast-forward `master`, push only `origin/master`, verify SHA, and complete pipeline state.
-3. Create PR-08 from the verified latest `master`, render only PR-08, and assign its distinct agent.
-
-## Notes For Next Session
-
-- Never point tests/smoke at a real issuer or the default user credential root; inject a temporary credential root and mock OAuth/provider transport.
-- Missing OAuth configuration is an expected safe state and must not trigger discovery.
+1. Create the atomic PR-08 commit, fast-forward local `master`, push only
+   `origin/master`, verify the remote SHA, then complete PR-08 pipeline state.
+2. Render PR-09 only after the verified push and create a fresh PR-09 feature
+   branch and independent implementation agent.

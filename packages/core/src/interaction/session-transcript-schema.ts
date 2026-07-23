@@ -50,6 +50,30 @@ export const RequestFailedEventSchema = BaseEventSchema.extend({
   error: z.string(),
 });
 
+export const RoutingSummaryEventSchema = BaseEventSchema.extend({
+  type: z.literal("routing_summary"),
+  requestId: z.string().min(1),
+  logicalModelId: z.string().min(1).max(160),
+  attempts: z.array(z.object({
+    backendId: z.string().min(1).max(160),
+    upstreamModelId: z.string().min(1).max(160),
+    attemptNumber: z.number().int().nonnegative(),
+    reason: z.string().min(1).max(80).optional(),
+    visibleOutput: z.boolean(),
+  }).strict()).max(100),
+  switches: z.array(z.object({
+    fromBackendId: z.string().min(1).max(160),
+    toBackendId: z.string().min(1).max(160),
+    reason: z.string().min(1).max(80).optional(),
+  }).strict()).max(50),
+  actualBackendId: z.string().min(1).max(160).nullable(),
+  actualModelId: z.string().min(1).max(160).nullable(),
+  promptFamily: z.string().min(1).max(40).nullable(),
+  promptRevision: z.number().int().nonnegative().nullable(),
+  retryCount: z.number().int().nonnegative(),
+  terminalState: z.enum(["succeeded", "failed", "interrupted", "exhausted", "cancelled"]),
+});
+
 export const MessageEventSchema = BaseEventSchema.extend({
   type: z.literal("message"),
   requestId: z.string().min(1),
@@ -72,6 +96,7 @@ export const TranscriptEventSchema = z.discriminatedUnion("type", [
   RequestStartedEventSchema,
   RequestCommittedEventSchema,
   RequestFailedEventSchema,
+  RoutingSummaryEventSchema,
   MessageEventSchema,
 ]);
 
@@ -80,5 +105,6 @@ export type SessionMetadataUpdatedEvent = z.infer<typeof SessionMetadataUpdatedE
 export type RequestStartedEvent = z.infer<typeof RequestStartedEventSchema>;
 export type RequestCommittedEvent = z.infer<typeof RequestCommittedEventSchema>;
 export type RequestFailedEvent = z.infer<typeof RequestFailedEventSchema>;
+export type RoutingSummaryEvent = z.infer<typeof RoutingSummaryEventSchema>;
 export type MessageEvent = z.infer<typeof MessageEventSchema>;
 export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;

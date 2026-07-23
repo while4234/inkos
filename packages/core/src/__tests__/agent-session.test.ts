@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
 const EMPTY_USAGE = {
   input: 0,
@@ -237,6 +238,7 @@ describe("runAgentSession cache — bookId switch", () => {
     evictAgentCache("s-project-root-cache");
     evictAgentCache("s-interleave-seq");
     evictAgentCache("s-context-window");
+    evictAgentCache("s-route-runtime-refresh");
     evictAgentCache("book-create-session");
     evictAgentCache("book-create-confirmed-session");
     evictAgentCache("short-session");
@@ -1390,6 +1392,102 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(events.filter((event) => event.type === "session_created")).toHaveLength(1);
     expect(events.filter((event) => event.type === "request_committed")).toHaveLength(2);
     expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index + 1));
+  });
+
+  it("uses the current route runtime for every cached turn without putting credentials in cache identity", async () => {
+    const pipeline = {} as any;
+    const calls: string[] = [];
+    const model = {
+      provider: "openai",
+      id: "compatibility-model",
+      name: "compatibility-model",
+      api: "openai-responses",
+      baseUrl: "https://example.invalid/v1",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200_000,
+      maxTokens: 4096,
+    } as any;
+    const runtime = (label: string) => ({
+      compatibilityModel: () => model,
+      stream: (
+        _reference: unknown,
+        _context: unknown,
+        _options: unknown,
+        routeOptions: { observer?: (event: any) => void },
+      ) => {
+        calls.push(label);
+        routeOptions.observer?.({
+          eventId: `${label}:1`,
+          requestId: label,
+          type: "attempt_started",
+          timestamp: new Date().toISOString(),
+          logicalModelId: "agent-default",
+          phase: "request",
+          backendId: label,
+          upstreamModelId: model.id,
+          retryCount: 0,
+          visibleOutput: false,
+        });
+        routeOptions.observer?.({
+          eventId: `${label}:2`,
+          requestId: label,
+          type: "succeeded",
+          timestamp: new Date().toISOString(),
+          logicalModelId: "agent-default",
+          phase: "complete",
+          backendId: label,
+          upstreamModelId: model.id,
+          retryCount: 0,
+          visibleOutput: false,
+        });
+        const stream = createAssistantMessageEventStream();
+        const message = {
+          role: "assistant",
+          content: [{ type: "text", text: label }],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: EMPTY_USAGE,
+          stopReason: "stop",
+          timestamp: Date.now(),
+        } as any;
+        queueMicrotask(() => {
+          stream.push({ type: "done", reason: "stop", message });
+          stream.end(message);
+        });
+        return stream;
+      },
+    });
+    const reference = { routeId: "agent-default", revision: "same-secret-free-revision" };
+
+    const first = await runAgentSession({
+      sessionId: "s-route-runtime-refresh",
+      bookId: "book-a",
+      language: "zh",
+      pipeline,
+      projectRoot,
+      route: { runtime: runtime("backend-a") as any, reference },
+    }, "first routed turn");
+    const agentCount = agentInstances.length;
+    const second = await runAgentSession({
+      sessionId: "s-route-runtime-refresh",
+      bookId: "book-a",
+      language: "zh",
+      pipeline,
+      projectRoot,
+      route: { runtime: runtime("backend-b") as any, reference },
+    }, "second routed turn");
+
+    expect(agentInstances).toHaveLength(agentCount);
+    expect(calls).toEqual(["backend-a", "backend-b"]);
+    expect(first.routingSummary?.actualBackendId).toBe("backend-a");
+    expect(second.routingSummary?.actualBackendId).toBe("backend-b");
+    const events = await readTranscriptEvents(projectRoot, "s-route-runtime-refresh");
+    const summaries = events.filter((event) => event.type === "routing_summary");
+    expect(summaries).toHaveLength(2);
+    expect(JSON.stringify(summaries)).not.toMatch(/api[_-]?key|authorization|bearer/i);
   });
 
   it("assigns transcript seq after interleaved non-agent writes", async () => {

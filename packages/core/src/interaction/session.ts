@@ -41,6 +41,30 @@ export const ToolExecutionSchema = z.object({
 
 export type ToolExecution = z.infer<typeof ToolExecutionSchema>;
 
+export const AgentRoutingResultSchema = z.object({
+  logicalModelId: z.string().min(1).max(160),
+  attempts: z.array(z.object({
+    backendId: z.string().min(1).max(160),
+    upstreamModelId: z.string().min(1).max(160),
+    attemptNumber: z.number().int().nonnegative(),
+    reason: z.string().min(1).max(80).optional(),
+    visibleOutput: z.boolean(),
+  }).strict()).max(100),
+  switches: z.array(z.object({
+    fromBackendId: z.string().min(1).max(160),
+    toBackendId: z.string().min(1).max(160),
+    reason: z.string().min(1).max(80).optional(),
+  }).strict()).max(50),
+  actualBackendId: z.string().min(1).max(160).nullable(),
+  actualModelId: z.string().min(1).max(160).nullable(),
+  promptFamily: z.string().min(1).max(40).nullable(),
+  promptRevision: z.number().int().nonnegative().nullable(),
+  retryCount: z.number().int().nonnegative(),
+  terminalState: z.enum(["succeeded", "failed", "interrupted", "exhausted", "cancelled"]),
+}).strict();
+
+export type AgentRoutingResult = z.infer<typeof AgentRoutingResultSchema>;
+
 export const InteractionMessageSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
   // Assistant turns may be tool-only. In that case the user-facing content is
@@ -48,6 +72,7 @@ export const InteractionMessageSchema = z.object({
   content: z.string(),
   thinking: z.string().optional(),
   toolExecutions: z.array(ToolExecutionSchema).optional(),
+  routingResult: AgentRoutingResultSchema.optional(),
   timestamp: z.number().int().nonnegative(),
 });
 

@@ -186,6 +186,87 @@ describe("chat message actions", () => {
     ]);
   });
 
+  it.each(["thinking", "tool"] as const)(
+    "preserves an interrupted %s-only Agent stream instead of replacing it with an error bubble",
+    async (kind) => {
+      const store = createTestStore();
+      const sessionId = store.getState().createDraftSession(null, "chat");
+      store.getState().setSelectedModel("gpt-route", "openai");
+      let resolveAgent!: (value: unknown) => void;
+      fetchJson
+        .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "chat" } })
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolveAgent = resolve;
+        }));
+
+      const sent = store.getState().sendMessage(sessionId, "continue", { sessionKind: "chat" });
+      await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+      if (kind === "thinking") {
+        fakeEventSources[0].emit("thinking:start", { sessionId });
+        fakeEventSources[0].emit("thinking:delta", { sessionId, text: "forwarded reasoning" });
+      } else {
+        fakeEventSources[0].emit("tool:start", {
+          sessionId,
+          id: "call-1",
+          tool: "read",
+          args: { path: "safe.txt" },
+        });
+      }
+      fakeEventSources[0].emit("routing:event", {
+        eventId: "route-request:2",
+        requestId: "route-request",
+        type: "failed",
+        timestamp: "2026-07-24T00:00:00.000Z",
+        logicalModelId: "agent-default",
+        logicalModelDisplayName: "Studio Agent",
+        phase: "request",
+        backendId: "backend-a",
+        upstreamModelId: "gpt-route",
+        reason: "network",
+        retryCount: 0,
+        visibleOutput: true,
+        context: { sessionId, scope: "agent" },
+      });
+      resolveAgent({
+        error: { code: "PROVIDER_NETWORK_ERROR", message: "stream interrupted" },
+        routing: {
+          interrupted: true,
+          message: "Interrupted after output; no automatic switch.",
+          summary: {
+            logicalModelId: "agent-default",
+            attempts: [{
+              backendId: "backend-a",
+              upstreamModelId: "gpt-route",
+              attemptNumber: 1,
+              reason: "network",
+              visibleOutput: true,
+            }],
+            switches: [],
+            actualBackendId: "backend-a",
+            actualModelId: "gpt-route",
+            promptFamily: "gpt",
+            promptRevision: 1,
+            retryCount: 0,
+            terminalState: "interrupted",
+          },
+        },
+      });
+      await sent;
+
+      const assistants = (store.getState().sessions[sessionId]?.messages ?? [])
+        .filter((message) => message.role === "assistant");
+      expect(assistants).toHaveLength(1);
+      expect(assistants[0]?.routingResult?.terminalState).toBe("interrupted");
+      expect(assistants[0]?.routingInterruption).toContain("no automatic switch");
+      expect(assistants[0]?.content).not.toContain("stream interrupted");
+      if (kind === "thinking") {
+        expect(assistants[0]?.thinking).toContain("forwarded reasoning");
+      } else {
+        expect(assistants[0]?.parts?.some((part) => part.type === "tool")).toBe(true);
+      }
+    },
+  );
+
   it("restores confirmed proposal cards when loading persisted session messages", () => {
     const store = createTestStore();
     const sessionId = store.getState().createDraftSession(null, "play", "open");

@@ -29,7 +29,19 @@ export {
   type AgentSessionAttachment,
   type AgentSessionConfig,
   type AgentSessionResult,
+  type AgentRoutingSummary,
 } from "./agent-session.js";
+export {
+  AgentRouteRuntime,
+  AgentRouteExhaustedError,
+  isMaterialAgentStreamEvent,
+  prepareAgentCandidateContext,
+  type AgentRouteReference,
+  type AgentRouteStreamOptions,
+  type AgentRouteContinuity,
+  type AgentRouteRuntimeOptions,
+  type AgentStreamInvoke,
+} from "./agent-route-runtime.js";
 export { createBookContextTransform } from "./context-transform.js";
 export {
   createSetWorldAnchorTool,

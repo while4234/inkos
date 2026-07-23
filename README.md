@@ -428,6 +428,15 @@ inkos compose chapter 吞天魔帝
 
 ### 多模型路由
 
+Studio Agent 对话与生产任务共用同一套逻辑模型路由。模型在尚未输出正文、
+thinking 或工具调用前发生配额、鉴权、限流、网络/超时、过载或模型不可用错误时，
+可按健康状态和有界策略重试或切换候选后端；失败候选的元数据不会混入最终输出。
+一旦出现非空文本、转发的 thinking，或任何工具调用阶段，连续性边界即关闭：
+后续故障会保留已显示内容并明确标记“输出后中断”，不会自动换后端续写，以避免
+重复文字或重复执行工具。刷新页面后仍可看到安全的逻辑模型、切换和尝试后端/模型摘要。
+跨后端 checkpoint/resume 与 partial-output continuation 不在当前支持范围内。
+完整配置与安全边界见 [MODEL_ROUTING.md](./MODEL_ROUTING.md)。
+
 不同 Agent 可以走不同模型和 Provider。写手用 Claude（创意强），审计用 GPT-4o（便宜快速），雷达用本地模型（零成本）。`inkos config set-model` 按 agent 粒度配置，未配置的自动回退全局模型。
 
 规范化逻辑模型、后端实例、凭证引用、自动迁移和恢复策略见 [MODEL_ROUTING.md](MODEL_ROUTING.md)；结构化供应商错误、取消和安全展示契约见 [PROVIDER_ERRORS.md](PROVIDER_ERRORS.md)。

@@ -67,6 +67,12 @@ import { createSkillRegistry, loadConfiguredCapabilitySkills } from "../skills/i
 import { assertSafeBookId } from "../utils/book-id.js";
 import { PlayStore } from "../play/play-store.js";
 import { isLlmStubEnabled, stubAgentStream } from "./llm-stub.js";
+import {
+  AgentRouteRuntime,
+  type AgentRouteContinuity,
+  type AgentRouteReference,
+} from "./agent-route-runtime.js";
+import type { RoutingEvent, RoutingEventObserver } from "../llm/routing-trace.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -98,7 +104,18 @@ export interface AgentSessionConfig {
   /** Project root directory (books/ lives under this). */
   projectRoot: string;
   /** pi-ai Model to use, or provider+modelId to resolve via getModel. */
-  model: Model<Api> | { provider: string; modelId: string };
+  model?: Model<Api> | { provider: string; modelId: string };
+  /**
+   * Optional logical-route stream boundary. Legacy model + apiKey callers stay
+   * compatible; routed callers resolve the concrete model and credential for
+   * every attempt and never place a token in the Agent cache identity.
+   */
+  route?: {
+    readonly runtime: AgentRouteRuntime;
+    readonly reference: AgentRouteReference;
+    readonly forwardThinking?: boolean;
+    readonly onRoutingEvent?: RoutingEventObserver;
+  };
   /** Optional API key. When omitted, falls back to env-based key lookup. */
   apiKey?: string;
   /** Allow the read tool to read absolute paths outside projectRoot/books. Defaults to false; set INKOS_AGENT_ALLOW_SYSTEM_READ=1 to enable. */
@@ -134,6 +151,30 @@ export interface AgentSessionResult {
   messages: AgentMessage[];
   /** Upstream model error surfaced by pi-agent-core, if the final assistant turn failed. */
   errorMessage?: string;
+  /** Safe, request-scoped route summary. Never contains credentials or prompts. */
+  routingSummary?: AgentRoutingSummary;
+}
+
+export interface AgentRoutingSummary {
+  readonly logicalModelId: string;
+  readonly attempts: ReadonlyArray<{
+    readonly backendId: string;
+    readonly upstreamModelId: string;
+    readonly attemptNumber: number;
+    readonly reason?: string;
+    readonly visibleOutput: boolean;
+  }>;
+  readonly switches: ReadonlyArray<{
+    readonly fromBackendId: string;
+    readonly toBackendId: string;
+    readonly reason?: string;
+  }>;
+  readonly actualBackendId: string | null;
+  readonly actualModelId: string | null;
+  readonly promptFamily: string | null;
+  readonly promptRevision: number | null;
+  readonly retryCount: number;
+  readonly terminalState: "succeeded" | "failed" | "interrupted" | "exhausted" | "cancelled";
 }
 
 export interface AgentSessionAttachment {
@@ -170,6 +211,13 @@ interface CachedAgent {
   allowSystemFileRead: boolean;
   backgroundTaskContext: string | undefined;
   suppressProductionTools: boolean;
+  routingCapture: {
+    events: RoutingEvent[];
+    terminalError?: Error;
+    observer?: RoutingEventObserver;
+    route?: AgentSessionConfig["route"];
+    continuity: AgentRouteContinuity;
+  };
   lastCommittedSeq: number;
   lastActive: number;
 }
@@ -217,9 +265,13 @@ function ensureCleanupTimer(): void {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveModel(spec: AgentSessionConfig["model"]): Model<Api> {
+function resolveModel(
+  spec: AgentSessionConfig["model"],
+  route: AgentSessionConfig["route"],
+): Model<Api> {
   if (!spec) {
-    throw new Error("Model is required but was undefined. Check LLM configuration.");
+    if (route) return route.runtime.compatibilityModel(route.reference);
+    throw new Error("Model is required when no logical Agent route is configured.");
   }
   if (typeof spec === "object" && "id" in spec && "api" in spec) {
     // Already a Model object.
@@ -239,7 +291,18 @@ function envFlagEnabled(value: string | undefined, defaultValue: boolean): boole
   return defaultValue;
 }
 
-function agentModelIdentity(model: Model<Api>): string {
+function agentModelIdentity(
+  model: Model<Api>,
+  route: AgentSessionConfig["route"],
+): string {
+  if (route) {
+    return [
+      "route",
+      route.reference.routeId,
+      route.reference.revision,
+      `thinking:${route.forwardThinking !== false}`,
+    ].join("::");
+  }
   return [
     model.api,
     model.provider,
@@ -759,6 +822,84 @@ function agentMessagesToPlain(
   return out;
 }
 
+function summarizeAgentRouting(
+  events: ReadonlyArray<RoutingEvent>,
+  terminalError?: Error,
+): AgentRoutingSummary | undefined {
+  const first = events[0];
+  if (!first) return undefined;
+  const attempts = events
+    .filter((event) => event.type === "attempt_started")
+    .map((event, index, all) => {
+      const next = all[index + 1];
+      const failed = events.find((candidate) =>
+        candidate.type === "failed"
+        && candidate.backendId === event.backendId
+        && candidate.timestamp >= event.timestamp
+        && (!next || candidate.timestamp < next.timestamp)
+      );
+      return {
+        backendId: safeRoutingSummaryField(event.backendId),
+        upstreamModelId: safeRoutingSummaryField(event.upstreamModelId),
+        attemptNumber: Math.max(1, event.retryCount + 1),
+        ...(failed?.reason ? { reason: failed.reason } : {}),
+        visibleOutput: failed?.visibleOutput ?? false,
+      };
+    });
+  const switches = events
+    .filter((event) => event.type === "backend_switched")
+    .flatMap((event) =>
+      event.fromBackendId && event.toBackendId
+        ? [{
+            fromBackendId: safeRoutingSummaryField(event.fromBackendId),
+            toBackendId: safeRoutingSummaryField(event.toBackendId),
+            ...(event.reason ? { reason: event.reason } : {}),
+          }]
+        : []
+    );
+  const succeeded = [...events].reverse().find((event) => event.type === "succeeded");
+  const latestAttempt = [...events].reverse().find((event) => event.type === "attempt_started");
+  const terminal = terminalError as Error & { readonly cancelled?: boolean; readonly visibleOutput?: boolean };
+  const exhausted = events.some((event) => event.type === "exhausted");
+  const terminalState: AgentRoutingSummary["terminalState"] = terminal?.cancelled
+    ? "cancelled"
+    : terminal?.visibleOutput
+      ? "interrupted"
+      : exhausted
+        ? "exhausted"
+        : terminalError
+          ? "failed"
+          : succeeded
+            ? "succeeded"
+            : "failed";
+  const prompt = first.modelGlobalPrompt;
+  return {
+    logicalModelId: safeRoutingSummaryField(first.logicalModelId),
+    attempts,
+    switches,
+    actualBackendId: safeNullableRoutingSummaryField(latestAttempt?.backendId ?? succeeded?.backendId),
+    actualModelId: safeNullableRoutingSummaryField(latestAttempt?.upstreamModelId ?? succeeded?.upstreamModelId),
+    promptFamily: safeNullableRoutingSummaryField(prompt?.family),
+    promptRevision: typeof prompt?.revision === "number" && Number.isInteger(prompt.revision)
+      ? Math.max(0, prompt.revision)
+      : null,
+    retryCount: events.filter((event) => event.type === "local_retry").length,
+    terminalState,
+  };
+}
+
+function safeRoutingSummaryField(value: string | undefined): string {
+  return value
+    ?.replace(/[\r\n\t]/g, " ")
+    .replace(/[^a-zA-Z0-9._:@/ -]/g, "")
+    .trim()
+    .slice(0, 160) || "unknown";
+}
+
+function safeNullableRoutingSummaryField(value: string | undefined): string | null {
+  return value ? safeRoutingSummaryField(value) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
@@ -977,8 +1118,8 @@ async function runAgentSessionUnlocked(
     instruction: userMessage,
   });
   const skillResolutionKey = skillResolutionCacheKey(skillResolution);
-  const model = resolveModel(config.model);
-  const requestedModelIdentity = agentModelIdentity(model);
+  const model = resolveModel(config.model, config.route);
+  const requestedModelIdentity = agentModelIdentity(model, config.route);
   const allowSystemFileRead = config.allowSystemFileRead ?? envFlagEnabled(process.env.INKOS_AGENT_ALLOW_SYSTEM_READ, false);
   const suppressProductionTools = config.suppressProductionTools ?? false;
   const playWorldExists = sessionKind === "play"
@@ -1005,7 +1146,7 @@ async function runAgentSessionUnlocked(
     const actionPayloadChanged = cached.actionPayloadKey !== actionPayloadKey;
     const skillResolutionChanged = cached.skillResolutionKey !== skillResolutionKey;
     const languageChanged = cached.language !== language;
-    const apiKeyChanged = cached.apiKey !== config.apiKey;
+    const apiKeyChanged = !config.route && cached.apiKey !== config.apiKey;
     const readPermissionChanged = cached.allowSystemFileRead !== allowSystemFileRead;
     const playWorldChanged = cached.playWorldExists !== playWorldExists;
     const backgroundTaskContextChanged = cached.backgroundTaskContext !== config.backgroundTaskContext;
@@ -1035,6 +1176,12 @@ async function runAgentSessionUnlocked(
   }
 
   if (!cached) {
+    const routingCapture: CachedAgent["routingCapture"] = {
+      events: [],
+      observer: config.route?.onRoutingEvent,
+      route: config.route,
+      continuity: { material: false },
+    };
     const restoredHistory = await restoreAgentMessagesFromTranscript(projectRoot, sessionId, sessionKind);
     if (restoredHistory.length > 0) {
       onContextCompression?.({
@@ -1103,9 +1250,30 @@ async function runAgentSessionUnlocked(
           return localAssistantStopStream(streamModel);
         }
         if (isLlmStubEnabled()) return stubAgentStream(streamModel, context);
+        const route = routingCapture.route;
+        if (route) {
+          return route.runtime.stream(
+            route.reference,
+            context,
+            options,
+            {
+              signal: options?.signal,
+              forwardThinking: route.forwardThinking,
+              observer: (event) => {
+                routingCapture.events.push(event);
+                return routingCapture.observer?.(event);
+              },
+              onTerminalError: (error) => {
+                routingCapture.terminalError = error;
+              },
+              continuity: routingCapture.continuity,
+            },
+          );
+        }
         return guardedStreamSimple(streamModel, context, options);
       },
       getApiKey: (provider: string) => {
+        if (routingCapture.route) return undefined;
         if (config.apiKey) return config.apiKey;
         return getEnvApiKey(provider);
       },
@@ -1124,10 +1292,11 @@ async function runAgentSessionUnlocked(
       playWorldExists,
       language,
       modelIdentity: requestedModelIdentity,
-      apiKey: config.apiKey,
+      apiKey: config.route ? undefined : config.apiKey,
       allowSystemFileRead,
       backgroundTaskContext: config.backgroundTaskContext,
       suppressProductionTools,
+      routingCapture,
       lastCommittedSeq: currentCommittedSeq ?? await latestCommittedSeq(projectRoot, sessionId),
       lastActive: Date.now(),
     };
@@ -1136,6 +1305,13 @@ async function runAgentSessionUnlocked(
   }
 
   cached.lastActive = Date.now();
+  cached.routingCapture.events = [];
+  delete cached.routingCapture.terminalError;
+  cached.routingCapture.continuity.material = false;
+  delete cached.routingCapture.continuity.lockedBackendId;
+  delete cached.routingCapture.continuity.upstreamModelId;
+  cached.routingCapture.observer = config.route?.onRoutingEvent;
+  cached.routingCapture.route = config.route;
   const { agent } = cached;
   const attachmentBlock = buildAttachmentUserBlock(config.attachments, language);
   const promptMessage = attachmentBlock ? `${userMessage}${attachmentBlock}` : userMessage;
@@ -1161,6 +1337,13 @@ async function runAgentSessionUnlocked(
   let successfulProductionToolResultSeen = false;
 
   const persistAgentEvent = async (event: AgentEvent): Promise<void> => {
+    if (
+      event.type === "tool_execution_start"
+      || event.type === "tool_execution_end"
+      || (event.type === "message_end" && event.message.role !== "user")
+    ) {
+      cached.routingCapture.continuity.material = true;
+    }
     if (event.type === "turn_start") {
       piTurnIndex += 1;
       return;
@@ -1219,6 +1402,28 @@ async function runAgentSessionUnlocked(
   // ----- Execute the turn -----
   let finalAssistant: AssistantMessage | undefined;
   let errorMessage: string | undefined;
+  let routingSummary: AgentRoutingSummary | undefined;
+  let routingSummaryPersisted = false;
+  const persistRoutingSummary = async (): Promise<void> => {
+    if (routingSummaryPersisted) return;
+    routingSummary = summarizeAgentRouting(
+      cached.routingCapture.events,
+      cached.routingCapture.terminalError,
+    );
+    if (!routingSummary) return;
+    await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
+      type: "routing_summary",
+      version: 1,
+      sessionId,
+      requestId,
+      seq,
+      timestamp: Date.now(),
+      ...routingSummary!,
+      attempts: [...routingSummary!.attempts],
+      switches: [...routingSummary!.switches],
+    }));
+    routingSummaryPersisted = true;
+  };
 
   try {
     if (promptImages.length > 0) {
@@ -1229,6 +1434,7 @@ async function runAgentSessionUnlocked(
 
     finalAssistant = lastAssistantMessage(agent.state.messages);
     errorMessage = assistantErrorMessage(finalAssistant);
+    await persistRoutingSummary();
     if (errorMessage) {
       const failedError = errorMessage;
       await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
@@ -1253,6 +1459,7 @@ async function runAgentSessionUnlocked(
       cached.lastCommittedSeq = committed.seq;
     }
   } catch (error) {
+    await persistRoutingSummary();
     await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
       type: "request_failed",
       version: 1,
@@ -1278,6 +1485,7 @@ async function runAgentSessionUnlocked(
     responseText,
     messages: allMessages.slice(),
     ...(errorMessage ? { errorMessage } : {}),
+    ...(routingSummary ? { routingSummary } : {}),
   };
 }
 

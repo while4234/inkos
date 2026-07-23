@@ -24,6 +24,7 @@ import {
   migrateBookSession,
   SessionAlreadyMigratedError,
   abortAgentSession,
+  AgentRouteRuntime,
   runAgentSession,
   resolveServicePreset,
   resolveServiceProviderFamily,
@@ -123,6 +124,8 @@ import {
   type RequestedIntent,
   type SessionKind,
   type AgentSessionAttachment,
+  type LogicalModelRoute,
+  type ModelRoutingConfig,
 } from "@actalk/inkos-core";
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -403,6 +406,34 @@ function isTextChatModelId(modelId: string): boolean {
 
 function filterTextChatModels<T extends { readonly id: string }>(models: ReadonlyArray<T>): T[] {
   return models.filter((model) => isTextChatModelId(model.id));
+}
+
+/**
+ * Resolve the Studio picker selection to a logical route when routing is
+ * configured. A concrete service/model that is not represented by a route
+ * remains a legacy explicit override.
+ */
+export function selectStudioAgentRoute(
+  routing: ModelRoutingConfig | undefined,
+  service: string | undefined,
+  model: string | undefined,
+): LogicalModelRoute | null {
+  if (!routing) return null;
+  const enabledRoutes = routing.routes.filter((route) => route.enabled);
+  if (!model) {
+    return enabledRoutes.find((route) => route.id === routing.defaultRouteId) ?? null;
+  }
+
+  const direct = enabledRoutes.find((route) => route.id === model);
+  if (direct) return direct;
+
+  const matching = enabledRoutes.filter((route) => route.candidates.some((candidate) => {
+    if (candidate.upstreamModelId !== model) return false;
+    if (!service) return true;
+    const backend = routing.backends.find((entry) => entry.id === candidate.backendId);
+    return backend?.id === service || backend?.service === service;
+  }));
+  return matching.find((route) => route.id === routing.defaultRouteId) ?? matching[0] ?? null;
 }
 
 function normalizeApiBookId(value: unknown, fieldName: string): string | null {
@@ -4716,8 +4747,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       // Resolve model — multi-service resolution
       let resolvedModel: ResolvedModel["model"] | undefined;
       let resolvedApiKey: string | undefined;
+      const agentLogicalRoute = selectStudioAgentRoute(
+        config.llm.routing,
+        reqService,
+        reqModel,
+      );
 
-      if (reqService && reqModel) {
+      if (!agentLogicalRoute && reqService && reqModel) {
         // 1. Frontend explicitly selected a service+model — fail loudly if no key
         try {
           const configuredEntry = await resolveConfiguredServiceEntry(root, reqService);
@@ -4746,7 +4782,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         }
       }
 
-      if (!resolvedModel) {
+      if (!agentLogicalRoute && !resolvedModel) {
         // 2. Try defaultModel from new config format
         const rawConfig = config.llm as unknown as Record<string, unknown>;
         const defaultModel = rawConfig.defaultModel as string | undefined;
@@ -4767,7 +4803,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         }
       }
 
-      if (!resolvedModel) {
+      if (!agentLogicalRoute && !resolvedModel) {
         // 3. Try first connected service from secrets
         const secrets = await loadSecrets(root);
         for (const [svcName, svcData] of Object.entries(secrets.services)) {
@@ -4793,7 +4829,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         }
       }
 
-      if (!resolvedModel) {
+      if (!agentLogicalRoute && !resolvedModel) {
         // 4. Legacy fallback: use createLLMClient
         resolvedModel = client._piModel
           ? client._piModel
@@ -4801,14 +4837,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         resolvedApiKey = client._apiKey;
       }
 
-      const model = resolvedModel!;
-      const agentApiKey = resolvedApiKey;
+      const model = resolvedModel;
+      const agentApiKey = agentLogicalRoute ? undefined : resolvedApiKey;
       const configuredEntry = reqService ? await resolveConfiguredServiceEntry(root, reqService) : undefined;
 
       // Create pipeline with resolved model (so sub_agent tools use the frontend-selected model)
       // Don't spread config.llm — its baseUrl/provider belong to the old service.
       // Let createLLMClient resolve baseUrl from the service preset.
-      const pipelineClient = (reqService && reqModel && resolvedModel)
+      const pipelineClient = (!agentLogicalRoute && reqService && reqModel && resolvedModel)
         ? createLLMClient({
             ...config.llm,
             service: configuredEntry?.service ?? reqService,
@@ -4835,8 +4871,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       const confirmedTaskId = confirmedIntent ? `direct-${confirmedIntent}-${randomUUID()}` : undefined;
 
       const pipeline = new PipelineRunner(await buildPipelineConfig({
-        client: pipelineClient,
-        model: reqModel ?? config.llm.model,
+        ...(agentLogicalRoute
+          ? {}
+          : {
+              client: pipelineClient,
+              model: reqModel ?? config.llm.model,
+            }),
         currentConfig: config,
         sessionIdForSSE: bookSession.sessionId,
         bookIdForSettings: activeBookId ?? undefined,
@@ -5006,10 +5046,39 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       // 生产工具（提示词只是软约束）。
       const backgroundTask = await findActiveRunningTask(bookSession.sessionId);
       const collectedToolExecs: CollectedToolExec[] = [];
+      const agentRouteRuntime = agentLogicalRoute && config.llm.routing
+        ? new AgentRouteRuntime({
+            routing: config.llm.routing,
+            projectRoot: root,
+            baseConfig: config.llm,
+          })
+        : undefined;
       const result = await runAgentSession(
         {
-          model,
-          apiKey: agentApiKey,
+          ...(agentRouteRuntime && agentLogicalRoute && config.llm.routing
+            ? {
+                route: {
+                  runtime: agentRouteRuntime,
+                  reference: agentRouteRuntime.reference(agentLogicalRoute.id),
+                  forwardThinking: true,
+                  onRoutingEvent: (event) => {
+                    const routingEvent = modelManagement.activity.record(
+                      event,
+                      config.llm.routing!,
+                      {
+                        sessionId: streamSessionId,
+                        scope: "agent",
+                        ...(agentBookId ? { bookId: agentBookId } : {}),
+                      },
+                    );
+                    broadcast("routing:event", routingEvent);
+                  },
+                },
+              }
+            : {
+                model: model!,
+                apiKey: agentApiKey,
+              }),
           pipeline,
           ...(backgroundTask
             ? {
@@ -5121,6 +5190,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         },
         instruction,
       );
+      const routing = result.routingSummary
+        ? {
+            summary: result.routingSummary,
+            interrupted: result.routingSummary.terminalState === "interrupted",
+            message: result.routingSummary.terminalState === "interrupted"
+              ? pick(
+                  surfaceLanguage,
+                  "模型流在已产生可见输出后中断；为避免重复文本或工具调用，本次未自动切换后端。",
+                  "The model stream was interrupted after visible output; no backend switch was attempted to avoid replaying text or tool calls.",
+                )
+              : undefined,
+          }
+        : undefined;
 
       if (result.responseText) {
         const actionExecutionError = validateAgentActionExecution({
@@ -5179,6 +5261,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           broadcast("agent:complete", { instruction, activeBookId, sessionId: bookSession.sessionId, sessionKind });
           return c.json({
             response: "",
+            ...(routing ? { routing } : {}),
             session: {
               sessionId: bookSession.sessionId,
               sessionKind,
@@ -5196,6 +5279,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           return c.json({
             error: { code: failure.code, message: failure.message },
             response: failure.message,
+            ...(routing ? { routing } : {}),
           }, failure.status);
         }
 
@@ -5220,6 +5304,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           broadcast("agent:complete", { instruction, activeBookId, sessionId: bookSession.sessionId, sessionKind: responseSessionKind });
           return c.json({
             response: "",
+            ...(routing ? { routing } : {}),
             session: {
               sessionId: bookSession.sessionId,
               sessionKind: responseSessionKind,
@@ -5239,6 +5324,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         return c.json({
           error: { code: "AGENT_EMPTY_RESPONSE", message: emptyMessage },
           response: emptyMessage,
+          ...(routing ? { routing } : {}),
         }, 502);
       }
       await refreshBookSessionFromTranscript();
@@ -5249,6 +5335,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
       return c.json({
         response: result.responseText,
+        ...(routing ? { routing } : {}),
         session: {
           sessionId: bookSession.sessionId,
           sessionKind: responseSessionKind,

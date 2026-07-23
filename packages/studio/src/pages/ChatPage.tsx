@@ -21,6 +21,7 @@ import {
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import { ToolExecutionSteps, type ProposedActionDetails } from "../components/chat/ToolExecutionSteps";
+import { AgentRoutingBanner } from "../components/chat/AgentRoutingBanner";
 import {
   buildNarrativeForecastRecheckInstruction,
   buildNarrativeForecastSelectionInstruction,
@@ -969,6 +970,13 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
           <div className="max-w-3xl mx-auto space-y-4">
             {messages.map((msg, i) => (
               <div key={`${msg.timestamp}-${i}`}>
+                {msg.role === "assistant" ? (
+                  <AgentRoutingBanner
+                    summary={msg.routingSummary}
+                    result={msg.routingResult}
+                    interruption={msg.routingInterruption}
+                  />
+                ) : null}
                 {msg.role === "user" ? (
                   /* User message */
                   <ChatMessage role="user" content={msg.content} timestamp={msg.timestamp} theme={theme} />

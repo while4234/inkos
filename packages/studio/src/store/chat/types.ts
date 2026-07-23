@@ -1,4 +1,4 @@
-import type { ActionPayload, ActionSource, PlayMode, RequestedIntent, SessionKind } from "@actalk/inkos-core";
+import type { ActionPayload, ActionSource, AgentRoutingSummary, PlayMode, RequestedIntent, SessionKind } from "@actalk/inkos-core";
 import type { StudioRoutingSummary } from "../../shared/contracts";
 
 // -- Data types --
@@ -55,6 +55,11 @@ export interface Message {
   readonly toolCall?: ToolCall;
   readonly toolExecutions?: ToolExecution[];
   readonly parts?: MessagePart[];              // chronological parts for interleaved rendering
+  /** Live, reconnect-safe logical routing activity for this assistant turn. */
+  readonly routingSummary?: StudioRoutingSummary;
+  /** Persisted terminal route result returned by the Agent session. */
+  readonly routingResult?: AgentRoutingSummary;
+  readonly routingInterruption?: string;
 }
 
 export interface SessionMessage {
@@ -63,6 +68,7 @@ export interface SessionMessage {
   readonly thinking?: string;
   readonly toolExecutions?: ReadonlyArray<ToolExecution>;
   readonly timestamp: number;
+  readonly routingResult?: AgentRoutingSummary;
 }
 
 export interface SessionSummary {
@@ -95,6 +101,11 @@ export interface AgentResponse {
     readonly messages?: ReadonlyArray<SessionMessage>;
   };
   readonly request?: unknown;
+  readonly routing?: {
+    readonly summary: AgentRoutingSummary;
+    readonly interrupted: boolean;
+    readonly message?: string;
+  };
 }
 
 export interface SessionResponse {

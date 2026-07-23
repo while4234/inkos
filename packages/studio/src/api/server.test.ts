@@ -274,6 +274,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
   return {
     StateManager: MockStateManager,
     PipelineRunner: MockPipelineRunner,
+    AgentRouteRuntime: actual.AgentRouteRuntime,
     Scheduler: MockScheduler,
     CodexCredentialStore: MockCodexCredentialStore,
     GrokCredentialStore: MockGrokCredentialStore,
@@ -413,6 +414,36 @@ const projectConfig = {
 
 function cloneProjectConfig() {
   return structuredClone(projectConfig);
+}
+
+function routingFixture() {
+  return {
+    version: 1 as const,
+    credentials: [{
+      id: "credential-openai",
+      kind: "api_key" as const,
+      label: "OpenAI",
+      scope: "project" as const,
+    }],
+    backends: [{
+      id: "backend-openai",
+      displayName: "OpenAI primary",
+      service: "openai",
+      provider: "openai" as const,
+      baseUrl: "https://api.example.com/v1",
+      credentialRef: { id: "credential-openai", kind: "api_key" as const },
+      enabled: true,
+      transport: { apiFormat: "responses" as const, stream: true },
+    }],
+    routes: [{
+      id: "agent-default",
+      displayName: "Studio agent",
+      promptFamily: "gpt" as const,
+      enabled: true,
+      candidates: [{ backendId: "backend-openai", upstreamModelId: "gpt-route" }],
+    }],
+    defaultRouteId: "agent-default",
+  };
 }
 
 async function writeCompleteBookFixture(root: string, bookId: string, title = "New Book") {
@@ -672,6 +703,15 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(isSafeBookId("demo-book")).toBe(true);
     expect(isSafeBookId("demo/book")).toBe(false);
   }, 60_000);
+
+  it("selects a configured logical route and preserves unmatched explicit model overrides", async () => {
+    const { selectStudioAgentRoute } = await import("./server.js");
+    const routing = routingFixture();
+
+    expect(selectStudioAgentRoute(routing, undefined, undefined)?.id).toBe("agent-default");
+    expect(selectStudioAgentRoute(routing, "openai", "gpt-route")?.id).toBe("agent-default");
+    expect(selectStudioAgentRoute(routing, "openai", "unconfigured-model")).toBeNull();
+  });
 
   it("returns from /api/daemon/start before the first write cycle finishes", async () => {
     let resolveStart: (() => void) | undefined;
@@ -2888,6 +2928,98 @@ describe("createStudioServer daemon lifecycle", () => {
       }),
       "检查当前状态",
     );
+  });
+
+  it("routes Studio Agent through AgentRouteRuntime and returns a safe interruption summary", async () => {
+    const routedConfig = cloneProjectConfig() as ReturnType<typeof cloneProjectConfig> & {
+      llm: ReturnType<typeof cloneProjectConfig>["llm"] & { routing: ReturnType<typeof routingFixture> };
+    };
+    routedConfig.llm.routing = routingFixture();
+    await writeFile(join(root, "inkos.json"), JSON.stringify(routedConfig, null, 2), "utf-8");
+    runAgentSessionMock.mockResolvedValueOnce({
+      responseText: "partial response",
+      messages: [],
+      routingSummary: {
+        logicalModelId: "agent-default",
+        attempts: [{
+          backendId: "backend-openai",
+          upstreamModelId: "gpt-route",
+          attemptNumber: 1,
+          reason: "network",
+          visibleOutput: true,
+        }],
+        switches: [],
+        actualBackendId: "backend-openai",
+        actualModelId: "gpt-route",
+        promptFamily: "gpt",
+        promptRevision: 1,
+        retryCount: 0,
+        terminalState: "interrupted",
+      },
+    });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(routedConfig as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "continue",
+        activeBookId: "demo-book",
+        sessionId: "agent-session-1",
+        service: "openai",
+        model: "gpt-route",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as any;
+    expect(body.routing).toMatchObject({
+      interrupted: true,
+      summary: {
+        logicalModelId: "agent-default",
+        terminalState: "interrupted",
+      },
+    });
+    expect(body.routing.message).not.toMatch(/token|api.?key|authorization/i);
+    const agentConfig = runAgentSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(agentConfig.route?.reference).toMatchObject({ routeId: "agent-default" });
+    expect(agentConfig.route?.forwardThinking).toBe(true);
+    expect(agentConfig.model).toBeUndefined();
+    expect(agentConfig.apiKey).toBeUndefined();
+    expect(agentConfig.route?.onRoutingEvent).toBeTypeOf("function");
+  });
+
+  it("keeps an unmatched explicit Studio model on the legacy direct path", async () => {
+    const routedConfig = cloneProjectConfig() as ReturnType<typeof cloneProjectConfig> & {
+      llm: ReturnType<typeof cloneProjectConfig>["llm"] & { routing: ReturnType<typeof routingFixture> };
+    };
+    routedConfig.llm.routing = routingFixture();
+    await writeFile(join(root, "inkos.json"), JSON.stringify(routedConfig, null, 2), "utf-8");
+    resolveServiceModelMock.mockResolvedValueOnce({
+      model: { provider: "openai", id: "legacy-explicit", api: "openai-completions" },
+      apiKey: "test-only-key",
+    });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(routedConfig as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "legacy override",
+        activeBookId: "demo-book",
+        sessionId: "agent-session-1",
+        service: "openai",
+        model: "legacy-explicit",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const agentConfig = runAgentSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(agentConfig.route).toBeUndefined();
+    expect(agentConfig.model).toMatchObject({ id: "legacy-explicit" });
+    expect(agentConfig.apiKey).toBe("test-only-key");
   });
 
   it("stores uploaded attachments and forwards them to the agent session", async () => {

@@ -123,6 +123,43 @@ export function applyRoutingEventToTaskMessages(
   }));
 }
 
+export function routingEventTarget(
+  event: RoutingActivityEventDTO,
+): { readonly kind: "task"; readonly taskId: string } | { readonly kind: "agent" } | { readonly kind: "ignore" } {
+  const taskId = event.context?.taskId;
+  if (taskId) return { kind: "task", taskId };
+  return event.context?.scope === "agent" ? { kind: "agent" } : { kind: "ignore" };
+}
+
+export function applyRoutingEventToAgentMessages(
+  messages: ReadonlyArray<Message>,
+  streamTs: number,
+  event: RoutingActivityEventDTO,
+): ReadonlyArray<Message> | null {
+  const [withStream] = getOrCreateStream(messages, streamTs);
+  for (let index = withStream.length - 1; index >= 0; index -= 1) {
+    const message = withStream[index];
+    if (message?.role !== "assistant" || message.timestamp !== streamTs) continue;
+    const routingSummary = reduceRoutingSummary(message.routingSummary, event);
+    if (routingSummary === message.routingSummary) return null;
+    const next = [...withStream];
+    next[index] = {
+      ...message,
+      routingSummary,
+      ...(routingSummary.terminalState === "interrupted"
+        ? {
+            routingInterruption: tr(
+              "模型流在已产生内容后中断；为避免重复文本或工具调用，本次未自动切换后端。",
+              "The model stream was interrupted after output; no backend switch was attempted to avoid replaying text or tool calls.",
+            ),
+          }
+        : {}),
+    };
+    return next;
+  }
+  return null;
+}
+
 /**
  * 倒序找最近一个运行中的聊天轮工具卡；跳过带 background 标记的后台任务卡。
  * 无 id 的回退事件只属于聊天轮，落到任务卡上会把聊天日志串排进任务里。
@@ -396,11 +433,17 @@ export function attachSessionStreamListeners({
     try {
       const data = event.data ? JSON.parse(event.data) as RoutingActivityEventDTO : null;
       if (!data || data.context?.sessionId !== sessionId) return;
-      const taskId = data.context?.taskId;
-      if (!taskId) return;
+      const target = routingEventTarget(data);
+      if (target.kind === "ignore") return;
+      // A terminal routing event can arrive immediately after the last
+      // thinking/text delta. Material output must be committed before the
+      // interruption marker is attached or the queued delta may be lost.
+      flushTextDeltas();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
-          const messages = applyRoutingEventToTaskMessages(runtime.messages, taskId, data);
+          const messages = target.kind === "task"
+            ? applyRoutingEventToTaskMessages(runtime.messages, target.taskId, data)
+            : applyRoutingEventToAgentMessages(runtime.messages, streamTs, data);
           return messages ? { messages } : {};
         }),
       }));

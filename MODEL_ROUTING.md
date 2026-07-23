@@ -1,0 +1,50 @@
+# InkOS Model Routing Configuration
+
+InkOS keeps three concerns separate:
+
+- A **logical model route** is the user-facing model choice. It owns an ordered
+  list of candidates and a `promptFamily`.
+- A **backend instance** describes a concrete provider endpoint and transport.
+  It references a credential by ID and never embeds a secret.
+- A **credential reference** is non-secret metadata. Project API keys live in
+  `.inkos/secrets.json`; future Codex and Grok credentials live under the
+  user-level `~/.inkos` credential store, never in the project directory.
+
+## Schema version and compatibility
+
+`llm.routing.version` is currently `1`. The existing `llm.services`,
+`llm.defaultModel`, top-level LLM compatibility fields, environment variables,
+and legacy string/object `modelOverrides` remain readable during the
+compatibility window. A route-aware override uses `{ "routeId": "route-..." }`.
+
+The first normal `loadProjectConfig()` call upgrades a legacy project when no
+routing graph exists. Stable credential, backend, and route IDs are derived
+from service identity and model identity, so repeated loads do not create new
+objects or rewrite unchanged files. Multi-service projects retain every
+service; the currently selected service and default model become the default
+single-candidate route.
+
+Project API keys are copied to credential-ID entries in
+`.inkos/secrets.json`, while the legacy service-keyed entries remain available
+to Studio, CLI, and older runtimes. No key is written to `inkos.json`.
+
+## Safe writes, recovery, and rollback
+
+Configuration and secret updates use same-directory temporary files followed
+by replacement. Secret directories/files request restrictive `0700`/`0600`
+permissions on platforms that support POSIX modes.
+
+Migration prepares secrets before committing `inkos.json`. If the config
+commit fails, InkOS restores the original secrets. If restoration itself
+fails, the unchanged legacy service entry remains readable and a later load
+can safely retry; InkOS does not delete the legacy configuration during this
+window.
+
+For a manual rollback, restore both `inkos.json` and
+`.inkos/secrets.json` from the same backup/revision. Removing only
+`llm.routing` is also safe while the compatibility fields remain: the next
+normal load deterministically reconstructs version 1 routing.
+
+OAuth access/refresh tokens are outside this migration. They must never be
+placed in `.inkos/secrets.json`, `inkos.json`, logs, API payloads, or project
+fixtures.

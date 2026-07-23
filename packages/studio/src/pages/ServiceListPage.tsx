@@ -72,6 +72,7 @@ function CoverConfigCard() {
   const [service, setService] = useState("kkaiapi");
   const [model, setModel] = useState("gpt-image-2");
   const [apiKey, setApiKey] = useState("");
+  const [hasStoredSecret, setHasStoredSecret] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "saving" | "saved" | "error">("loading");
   const [message, setMessage] = useState("");
@@ -101,13 +102,17 @@ function CoverConfigCard() {
   useEffect(() => {
     if (!service) return;
     let cancelled = false;
-    void fetchJson<{ apiKey?: string }>(`/cover/secret/${encodeURIComponent(service)}`)
+    void fetchJson<{ configured?: boolean; maskedApiKey?: string }>(`/cover/secret/${encodeURIComponent(service)}`)
       .then((payload) => {
         if (cancelled) return;
-        setApiKey(payload.apiKey ?? "");
+        setApiKey("");
+        setHasStoredSecret(Boolean(payload.configured));
       })
       .catch(() => {
-        if (!cancelled) setApiKey("");
+        if (!cancelled) {
+          setApiKey("");
+          setHasStoredSecret(false);
+        }
       });
     return () => { cancelled = true; };
   }, [service]);
@@ -126,17 +131,20 @@ function CoverConfigCard() {
     setStatus("saving");
     setMessage("");
     try {
-      await fetchJson(`/cover/secret/${encodeURIComponent(provider.service)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey.trim() }),
-      });
+      if (apiKey.trim() || !hasStoredSecret) {
+        await fetchJson(`/cover/secret/${encodeURIComponent(provider.service)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apiKey: apiKey.trim() }),
+        });
+      }
       await fetchJson("/cover/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ service: provider.service, model }),
       });
       setStatus("saved");
+      if (apiKey.trim()) setHasStoredSecret(true);
       setMessage(tr("封面配置已保存", "Cover config saved"));
     } catch (error) {
       setStatus("error");
@@ -199,7 +207,7 @@ function CoverConfigCard() {
             type={showKey ? "text" : "password"}
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            placeholder="sk-..."
+            placeholder={hasStoredSecret ? tr("已保存；留空保持不变", "Saved; leave blank to keep") : "sk-..."}
             className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 pr-10 text-sm font-mono"
           />
           <button

@@ -32,6 +32,7 @@ import {
   resolveServiceModel,
   loadSecrets,
   saveSecrets,
+  writeProjectConfigWithRouting,
   listModelsForService,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
@@ -361,6 +362,13 @@ function writeTarOctal(header: Buffer, offset: number, length: number, value: nu
 function isHeaderSafeApiKey(value: string): boolean {
   if (!value) return true;
   return /^[\x21-\x7E]+$/.test(value);
+}
+
+function maskApiKey(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= 8) return "••••••••";
+  return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`;
 }
 
 const NON_TEXT_MODEL_ID_PARTS = [
@@ -1946,6 +1954,40 @@ function syncTopLevelLlmMirror(llm: Record<string, unknown>): void {
   if (selectedEntry.stream !== undefined) llm.stream = selectedEntry.stream;
 }
 
+function preferRouteReferencesForOverrides(
+  overrides: Record<string, unknown>,
+  llm: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const routing = llm?.routing;
+  if (!routing || typeof routing !== "object" || Array.isArray(routing)) return overrides;
+  const routes = (routing as Record<string, unknown>).routes;
+  if (!Array.isArray(routes)) return overrides;
+
+  const routeByModel = new Map<string, string>();
+  routes.forEach((route) => {
+    if (!route || typeof route !== "object") return;
+    const record = route as Record<string, unknown>;
+    if (typeof record.id !== "string") return;
+    if (typeof record.displayName === "string") {
+      routeByModel.set(record.displayName, record.id);
+    }
+    if (!Array.isArray(record.candidates)) return;
+    record.candidates.forEach((candidate) => {
+      if (!candidate || typeof candidate !== "object") return;
+      const upstreamModelId = (candidate as Record<string, unknown>).upstreamModelId;
+      if (typeof upstreamModelId === "string") {
+        routeByModel.set(upstreamModelId, record.id as string);
+      }
+    });
+  });
+
+  return Object.fromEntries(Object.entries(overrides).map(([agent, value]) => {
+    if (typeof value !== "string") return [agent, value];
+    const routeId = routeByModel.get(value);
+    return [agent, routeId ? { routeId } : value];
+  }));
+}
+
 async function loadRawConfig(root: string): Promise<Record<string, unknown>> {
   const configPath = join(root, "inkos.json");
   const raw = await readFile(configPath, "utf-8");
@@ -1953,7 +1995,7 @@ async function loadRawConfig(root: string): Promise<Record<string, unknown>> {
 }
 
 async function saveRawConfig(root: string, config: Record<string, unknown>): Promise<void> {
-  await writeFile(join(root, "inkos.json"), JSON.stringify(config, null, 2), "utf-8");
+  await writeProjectConfigWithRouting(root, config);
 }
 
 type ChapterReviewMode = "auto" | "manual";
@@ -3543,7 +3585,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       return c.json({ error: "Unsupported cover service" }, 400);
     }
     const secrets = await loadSecrets(root);
-    return c.json({ apiKey: secrets.services[coverSecretKey(service)]?.apiKey ?? "" });
+    const apiKey = secrets.services[coverSecretKey(service)]?.apiKey ?? "";
+    return c.json({
+      configured: Boolean(apiKey),
+      maskedApiKey: apiKey ? maskApiKey(apiKey) : "",
+    });
   });
 
   app.put("/api/v1/cover/secret/:service", async (c) => {
@@ -3600,13 +3646,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.post("/api/v1/services/:service/test", async (c) => {
     const service = c.req.param("service");
     const { apiKey, baseUrl, apiFormat, stream } = await c.req.json<{
-      apiKey: string;
+      apiKey?: string;
       baseUrl?: string;
       apiFormat?: "chat" | "responses";
       stream?: boolean;
     }>();
 
     const language = await currentProjectLanguage();
+    const secrets = await loadSecrets(root);
+    const resolvedApiKey = apiKey?.trim() || secrets.services[service]?.apiKey || "";
     const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service, baseUrl);
     if (!resolvedBaseUrl) {
       return c.json({
@@ -3620,7 +3668,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       provider: resolveServiceProviderFamily(baseService) ?? "openai",
       baseUrl: resolvedBaseUrl,
     });
-    if (!apiKey?.trim() && !apiKeyOptional) {
+    if (!resolvedApiKey && !apiKeyOptional) {
       return c.json({
         ok: false,
         error: pick(language, "API Key 不能为空", "API Key must not be empty"),
@@ -3632,7 +3680,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const probe = await probeServiceCapabilities({
       root,
       service,
-      apiKey: apiKey?.trim() ?? "",
+      apiKey: resolvedApiKey,
       baseUrl: resolvedBaseUrl,
       preferredApiFormat: apiFormat,
       preferredStream: stream,
@@ -3701,8 +3749,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.get("/api/v1/services/:service/secret", async (c) => {
     const service = c.req.param("service");
     const secrets = await loadSecrets(root);
+    const apiKey = secrets.services[service]?.apiKey ?? "";
     return c.json({
-      apiKey: secrets.services[service]?.apiKey ?? "",
+      configured: Boolean(apiKey),
+      maskedApiKey: apiKey ? maskApiKey(apiKey) : "",
     });
   });
 
@@ -5363,9 +5413,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const { overrides } = await c.req.json<{ overrides: Record<string, unknown> }>();
     const configPath = join(root, "inkos.json");
     const raw = JSON.parse(await readFile(configPath, "utf-8"));
-    raw.modelOverrides = overrides;
-    const { writeFile: writeFileFs } = await import("node:fs/promises");
-    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    raw.modelOverrides = preferRouteReferencesForOverrides(
+      overrides,
+      raw.llm && typeof raw.llm === "object" && !Array.isArray(raw.llm)
+        ? raw.llm as Record<string, unknown>
+        : undefined,
+    );
+    await saveRawConfig(root, raw);
     return c.json({ ok: true });
   });
 

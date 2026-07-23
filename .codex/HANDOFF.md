@@ -1,60 +1,70 @@
 # Project Handoff
 
-Last updated: 2026-07-23 20:03 CST
+Last updated: 2026-07-23 23:04 CST
 Project root: D:\lnkos
-Branch: master
-Status: complete
+Pipeline: `model-continuity-p0`
+Position: PR-01 accepted on `feature/model-continuity-pr01`; delivery target is `origin/master`
 
 ## Current Goal
 
-Initialize `while4234/inkos` as an independent public mirror of `Narcooo/inkos`, with a safe local customization and upstream-master synchronization workflow.
+Deliver PR-01 through PR-09 serially. Each PR uses a different implementation agent, receives full acceptance validation, then becomes one atomic fast-forward commit on `origin/master` before the next PR starts.
 
 ## Current Position
 
-Repository initialization, documentation, local setup, local deployment, and CI verification are complete. Studio is running at `http://127.0.0.1:4567` with runtime content stored outside the repository.
+PR-01 establishes the versioned routing schema, stable credential/backend/route identities, project API-key credential resolution, atomic migration, legacy config compatibility, and route-aware model overrides. Its implementation and acceptance gates are complete. The pipeline state under `.codex/pr-pipeline/` is intentionally local-only and records the pushed SHA after remote verification.
 
 ## Recent Actions
 
-- Created the public repository `while4234/inkos`.
-- Imported upstream `master` at `1a2fd09b50681f764081675feebd02a9657f973b`.
-- Pushed 38 release tags.
-- Created `upstream-sync` at the same baseline.
-- Restricted `upstream` fetches to `master` and disabled pushes to it.
-- Installed dependencies and built all workspace packages with pnpm 9.15.9.
-- Started Studio from `D:\inkos-data\default`; it is listening on port 4567.
-- Pushed initialization commit `6b72785a798441f3a84aba1613a8157016247f5f`.
-- Verified GitHub Actions run `30004983154` across Windows/Linux and Node 20/22/24.
+- Added versioned routing models and public Core exports for credentials, backend instances, logical routes, candidates, and resolvers.
+- Integrated idempotent migration into normal project loading, with atomic config/secret writes and rollback on partial failure.
+- Preserved old single-service, multi-service, string override, object override, CLI, and Studio write paths through compatibility adapters.
+- Changed Studio service and cover secret reads to return configured/masked status instead of complete API keys.
+- Added a six-second cancellation budget to CLI doctor connectivity probing so the Windows integration test completes within its process deadline.
+- Added focused migration, routing, secret, resolver, pipeline, Studio, and CLI regression coverage.
 
 ## Changed / Relevant Files
 
-- `AGENTS.md`: durable repository and update semantics.
-- `LOCAL_DEVELOPMENT.md`: Windows development and synchronization workflow.
-- `README.md`, `README.en.md`, `README.ja.md`: upstream attribution.
-- `GIT_NOTES.md`: Git baseline and rollback notes.
-- `Setup-InkOS.*`, `Start-InkOS.*`: repeatable Windows setup and startup.
+- `packages/core/src/llm/model-routing.ts`
+- `packages/core/src/llm/credentials/index.ts`
+- `packages/core/src/llm/atomic-json.ts`
+- `packages/core/src/llm/config-migration.ts`
+- `packages/core/src/llm/secrets.ts`
+- `packages/core/src/models/project.ts`
+- `packages/core/src/utils/config-loader.ts`
+- `packages/core/src/utils/effective-llm-config.ts`
+- `packages/core/src/pipeline/runner.ts`
+- `packages/cli/src/commands/config.ts`
+- `packages/cli/src/commands/doctor.ts`
+- `packages/studio/src/api/server.ts`
+- `packages/studio/src/pages/ServiceDetailPage.tsx`
+- `packages/studio/src/pages/ServiceListPage.tsx`
+- `packages/studio/src/pages/service-detail-state.ts`
+- `MODEL_ROUTING.md` and localized README routing links
 
 ## Validation
 
-- Remote baseline and tag import -> passed.
-- Frozen dependency install, build, typecheck, publish manifests, and setup launcher -> passed.
-- Core tests -> 181 files / 1761 tests passed.
-- Studio tests -> 58 files / 547 tests passed.
-- CLI tests -> 228 passed; one upstream localhost `doctor` integration test times out at 10 seconds.
-- Studio smoke test -> HTTP 200 and visible UI passed.
-- GitHub Actions -> all six build/test matrix jobs and `verify-pack` passed.
+- `corepack pnpm@9.15.9 install --frozen-lockfile` -> passed.
+- Root `build` and `typecheck` -> passed after final changes.
+- Root `test` -> passed: Core 184 files / 1781 tests; Studio 58 files / 549 tests; CLI 41 files / 229 tests.
+- `verify:publish-manifests` -> passed for Core, CLI, and Studio.
+- Focused Core routing/migration/secret/pipeline tests -> 119 passed.
+- Focused Studio server/service-secret tests -> 156 passed.
+- `git diff --check` -> passed; line-ending conversion warnings only.
+- Diff path and credential scans -> no runtime content, pipeline state, Authorization header, bearer token, or complete credential additions.
 
 ## Blockers / Risks
 
-- The upstream CLI integration test `inkos doctor > treats localhost OpenAI-compatible endpoints as API-key optional` times out during API connectivity on this Windows environment. Runtime Studio deployment is unaffected, and the same test passes in GitHub Actions.
-- GitHub reports a non-blocking warning that some pinned action versions still target its deprecated internal Node.js 20 runtime.
+- No PR-01 blocker remains.
+- Cross-backend route execution is intentionally rejected until PR-03; PR-01 only resolves route overrides on the current backend.
+- Existing legacy fields remain during the compatibility window and must not become a second routing implementation.
 
 ## Next Steps
 
-1. Configure an LLM service in the open Studio UI using the user's private API key.
-2. Create `feature/<name>` branches from personal `master` for localization work.
-3. Use the documented confirmation gate whenever an upstream `master` merge has text, interface, or behavior conflicts.
+1. Create the atomic PR-01 commit, fast-forward local `master`, push `origin/master`, and verify the remote SHA.
+2. Mark PR-01 complete in local pipeline state with its commit and validation evidence.
+3. Render PR-02 only, create `feature/model-continuity-pr02` from the verified remote master, and assign a different agent.
 
-## Notes For Next Session
+## Safety Notes
 
-- “更新代码” means update only from the personal `origin`.
-- “更新原始代码” means use only commits already merged into `Narcooo/inkos` `master`; never adopt code from other upstream branches.
+- Never push `upstream`, force-push, publish, deploy, or call real paid model/OAuth services for this pipeline.
+- Never put API keys, tokens, Authorization headers, runtime content, or `.codex/pr-pipeline/` state in Git.

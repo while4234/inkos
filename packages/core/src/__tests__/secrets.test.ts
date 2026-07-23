@@ -55,6 +55,31 @@ describe("secrets", () => {
       expect(secrets.services.new.apiKey).toBe("new-key");
       expect(secrets.services.old).toBeUndefined();
     });
+
+    it("keeps generated credential entries synchronized with legacy Studio writes", async () => {
+      await saveSecrets(root, {
+        services: { moonshot: { apiKey: "fixture-old-key" } },
+        credentials: {
+          "credential-moonshot": {
+            kind: "api_key",
+            apiKey: "fixture-stale-key",
+            legacyServiceId: "moonshot",
+          },
+        },
+      });
+
+      let secrets = await loadSecrets(root);
+      expect(secrets.credentials?.["credential-moonshot"]?.apiKey).toBe("fixture-old-key");
+
+      secrets.services.moonshot = { apiKey: "fixture-new-key" };
+      await saveSecrets(root, secrets);
+      secrets = await loadSecrets(root);
+      expect(secrets.credentials?.["credential-moonshot"]?.apiKey).toBe("fixture-new-key");
+
+      delete secrets.services.moonshot;
+      await saveSecrets(root, secrets);
+      expect((await loadSecrets(root)).credentials?.["credential-moonshot"]).toBeUndefined();
+    });
   });
 
   describe("getServiceApiKey", () => {

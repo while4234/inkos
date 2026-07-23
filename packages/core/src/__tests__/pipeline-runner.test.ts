@@ -381,6 +381,86 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("resolves a route override through the normalized default backend", () => {
+    const client = {
+      provider: "openai",
+      apiFormat: "chat",
+      stream: false,
+      defaults: {
+        temperature: 0.7,
+        maxTokens: 4096,
+        thinkingBudget: 0,
+      },
+    } as ConstructorParameters<typeof PipelineRunner>[0]["client"];
+    const runner = new PipelineRunner({
+      client,
+      model: "base-model",
+      projectRoot: process.cwd(),
+      defaultLLMConfig: {
+        provider: "custom",
+        service: "custom",
+        configSource: "studio",
+        baseUrl: "https://base.example/v1",
+        apiKey: "fixture-key",
+        model: "base-model",
+        temperature: 0.7,
+        thinkingBudget: 0,
+        apiFormat: "chat",
+        stream: false,
+        routing: {
+          version: 1,
+          credentials: [{
+            id: "credential-base",
+            kind: "api_key",
+            label: "Base",
+            scope: "project",
+          }],
+          backends: [{
+            id: "backend-base",
+            displayName: "Base",
+            service: "custom:Base",
+            provider: "custom",
+            baseUrl: "https://base.example/v1",
+            credentialRef: {
+              id: "credential-base",
+              kind: "api_key",
+            },
+            enabled: true,
+            transport: {
+              apiFormat: "chat",
+              stream: false,
+            },
+          }],
+          routes: [{
+            id: "route-writer",
+            displayName: "Writer",
+            promptFamily: "generic",
+            enabled: true,
+            candidates: [{
+              backendId: "backend-base",
+              upstreamModelId: "writer-model",
+            }],
+          }],
+          defaultRouteId: "route-writer",
+        },
+      },
+      modelOverrides: {
+        writer: { routeId: "route-writer" },
+      },
+    });
+
+    const resolveOverride = (
+      runner as unknown as {
+        resolveOverride: (agent: string) => { model: string; client: unknown };
+      }
+    ).resolveOverride.bind(runner);
+
+    expect(resolveOverride("writer")).toEqual({
+      model: "writer-model",
+      client,
+    });
+  });
+
   it("initializes control documents during book creation", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-init-book-test-"));
     const bookId = "bootstrap-book";

@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { findProjectRoot, log, logError, GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH } from "../utils.js";
-import { listModelsForService } from "@actalk/inkos-core";
+import { listModelsForService, writeProjectConfigWithRouting } from "@actalk/inkos-core";
 import { formatListModelsEmpty, formatListModelsHeader, resolveCliLanguage } from "../localization.js";
 
 export const configCommand = new Command("config")
@@ -81,7 +81,7 @@ configCommand
         target[finalKey] = value;
       }
 
-      await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+      await writeProjectConfigWithRouting(root, config);
       log(`Set ${key} = ${value}`);
     } catch (e) {
       logError(`Failed to update config: ${e}`);
@@ -167,6 +167,31 @@ configCommand
 const KNOWN_AGENTS = ["writer", "auditor", "reviser", "architect", "radar", "chapter-analyzer"] as const;
 const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+function findRouteIdForModel(config: Record<string, unknown>, model: string): string | undefined {
+  const llm = objectRecord(config.llm);
+  const routing = objectRecord(llm?.routing);
+  const routes = routing?.routes;
+  if (!Array.isArray(routes)) return undefined;
+  const route = routes.find((entry: unknown) => {
+    if (!entry || typeof entry !== "object") return false;
+    const record = entry as Record<string, unknown>;
+    if (record.displayName === model) return true;
+    return Array.isArray(record.candidates)
+      && record.candidates.some((candidate) => (
+        candidate
+        && typeof candidate === "object"
+        && (candidate as Record<string, unknown>).upstreamModelId === model
+      ));
+  }) as Record<string, unknown> | undefined;
+  return typeof route?.id === "string" ? route.id : undefined;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 function validateApiKeyEnvName(value: string): string | undefined {
   if (ENV_VAR_NAME_PATTERN.test(value)) return undefined;
   if (/^(sk-|sess-|rk-|pk-)/i.test(value) || value.includes("://")) {
@@ -216,10 +241,14 @@ configCommand
         if (opts.stream === false) override.stream = false;
         config.modelOverrides = { ...overrides, [agent]: override };
       } else {
-        config.modelOverrides = { ...overrides, [agent]: model };
+        const routeId = findRouteIdForModel(config, model);
+        config.modelOverrides = {
+          ...overrides,
+          [agent]: routeId ? { routeId } : model,
+        };
       }
 
-      await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+      await writeProjectConfigWithRouting(root, config);
       log(`Model override: ${agent} → ${model}${opts.baseUrl ? ` (${opts.baseUrl})` : ""}`);
     } catch (e) {
       logError(`Failed to update config: ${e}`);
@@ -245,7 +274,7 @@ configCommand
       }
       const { [agent]: _, ...rest } = overrides;
       config.modelOverrides = Object.keys(rest).length > 0 ? rest : undefined;
-      await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+      await writeProjectConfigWithRouting(root, config);
       log(`Removed model override for ${agent}. Will use default model.`);
     } catch (e) {
       logError(`Failed to update config: ${e}`);

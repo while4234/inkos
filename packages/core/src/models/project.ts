@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  ModelRoutingConfigSchema,
+  RouteLLMOverrideSchema,
+  type RouteLLMOverride,
+} from "../llm/model-routing.js";
 
 // C1 (v2.0.0 breaking): `maxTokens` 字段已被 providers bank 接管；zod 用 strip mode 静默丢弃老配置里的 `maxTokens`。
 const LLMServiceEntrySchema = z.object({
@@ -34,6 +39,7 @@ export const LLMConfigSchema = z.object({
   stream: z.boolean().default(true),
   services: z.array(LLMServiceEntrySchema).optional(),
   defaultModel: z.string().min(1).optional(),
+  routing: ModelRoutingConfigSchema.optional(),
   cover: LLMCoverConfigSchema,
 });
 
@@ -110,11 +116,16 @@ export const AgentLLMOverrideSchema = z.object({
 });
 
 export type AgentLLMOverride = z.infer<typeof AgentLLMOverrideSchema>;
+export type ModelOverride = string | AgentLLMOverride | RouteLLMOverride;
 
 export const InputGovernanceModeSchema = z.enum(["legacy", "v2"]);
 export type InputGovernanceMode = z.infer<typeof InputGovernanceModeSchema>;
 
-const ModelOverrideValueSchema = z.union([z.string(), AgentLLMOverrideSchema]);
+export const ModelOverrideValueSchema = z.union([
+  z.string(),
+  RouteLLMOverrideSchema,
+  AgentLLMOverrideSchema,
+]);
 
 export const ResearchSearchConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -176,6 +187,21 @@ export const ProjectConfigSchema = z.object({
       retryTemperatureStep: 0.1,
     },
   }),
+}).superRefine((project, context) => {
+  const routeIds = new Set(project.llm.routing?.routes.map((route) => route.id) ?? []);
+  for (const [agent, override] of Object.entries(project.modelOverrides ?? {})) {
+    if (
+      typeof override !== "string"
+      && "routeId" in override
+      && !routeIds.has(override.routeId)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `routeId references missing logical model route "${override.routeId}"`,
+        path: ["modelOverrides", agent, "routeId"],
+      });
+    }
+  }
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;

@@ -4,7 +4,8 @@ import { chatCompletion, createLLMClient } from "../llm/provider.js";
 import type { Logger } from "../utils/logger.js";
 import type { BookConfig, FanficMode, RevisionGate } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
-import type { NotifyChannel, LLMConfig, AgentLLMOverride, InputGovernanceMode } from "../models/project.js";
+import type { NotifyChannel, LLMConfig, ModelOverride, InputGovernanceMode } from "../models/project.js";
+import { resolveLogicalModelRoute } from "../llm/model-routing.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import { ArchitectAgent, type ArchitectOutput } from "../agents/architect.js";
 import { FoundationReviewerAgent } from "../agents/foundation-reviewer.js";
@@ -278,7 +279,7 @@ export interface PipelineConfig {
   readonly notifyChannels?: ReadonlyArray<NotifyChannel>;
   readonly radarSources?: ReadonlyArray<RadarSource>;
   readonly externalContext?: string;
-  readonly modelOverrides?: Record<string, string | AgentLLMOverride>;
+  readonly modelOverrides?: Record<string, ModelOverride>;
   readonly inputGovernanceMode?: InputGovernanceMode;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
@@ -622,6 +623,29 @@ export class PipelineRunner {
     }
     if (typeof override === "string") {
       return { model: override, client: this.config.client };
+    }
+    if ("routeId" in override) {
+      const routing = this.config.defaultLLMConfig?.routing;
+      if (!routing) {
+        throw new Error(`Model override route "${override.routeId}" requires llm.routing configuration.`);
+      }
+      const route = resolveLogicalModelRoute(routing, override.routeId);
+      const candidate = route.candidates[0]!;
+      const backend = routing.backends.find((entry) => entry.id === candidate.backendId);
+      if (!backend) {
+        throw new Error(`Logical model route "${route.id}" references an unavailable backend.`);
+      }
+      if (!backend.enabled) {
+        throw new Error(`Logical model route "${route.id}" references disabled backend "${backend.id}".`);
+      }
+      const defaultRoute = resolveLogicalModelRoute(routing, routing.defaultRouteId);
+      const defaultBackendId = defaultRoute.candidates[0]?.backendId;
+      if (backend.id !== defaultBackendId) {
+        throw new Error(
+          `Logical model route "${route.id}" requires backend "${backend.id}"; cross-backend routing is not enabled yet.`,
+        );
+      }
+      return { model: candidate.upstreamModelId, client: this.config.client };
     }
     // Full override — needs its own client if baseUrl differs
     if (!override.baseUrl) {

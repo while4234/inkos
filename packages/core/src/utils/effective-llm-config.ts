@@ -6,6 +6,7 @@ import { getEndpoint } from "../llm/providers/index.js";
 import { guessServiceFromBaseUrl, resolveServicePreset, resolveServiceProviderFamily } from "../llm/service-presets.js";
 import { isApiKeyOptionalForEndpoint } from "./llm-endpoint-auth.js";
 import { cliOverlayEnv, legacyEnv, studioIgnoredEnv, type LLMEnvLayers, type LLMEnvMap } from "./llm-env.js";
+import type { ModelRoutingConfig } from "../llm/model-routing.js";
 
 export type LLMConsumer = "studio" | "cli" | "daemon" | "deploy";
 export type LLMConfigMode = "studio-project" | "cli-project" | "legacy-env";
@@ -39,6 +40,7 @@ export interface EffectiveLLMDiagnostics {
 export interface EffectiveLLMConfigResult {
   readonly config: ProjectConfig;
   readonly llm: LLMConfig;
+  readonly routing?: ModelRoutingConfig;
   readonly diagnostics: EffectiveLLMDiagnostics;
 }
 
@@ -114,6 +116,7 @@ export async function resolveEffectiveLLMConfig(
   return {
     config: parsed,
     llm: parsed.llm,
+    ...(parsed.llm.routing ? { routing: parsed.llm.routing } : {}),
     diagnostics,
   };
 }

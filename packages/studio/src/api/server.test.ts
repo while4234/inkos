@@ -47,6 +47,12 @@ const migrateBookSessionMock = vi.fn();
 const resolveServiceModelMock = vi.fn();
 const loadSecretsMock = vi.fn();
 const saveSecretsMock = vi.fn();
+const writeProjectConfigWithRoutingMock = vi.fn(async (
+  projectRoot: string,
+  config: Record<string, unknown>,
+) => {
+  await writeFile(join(projectRoot, "inkos.json"), JSON.stringify(config, null, 2), "utf-8");
+});
 const getServiceApiKeyMock = vi.fn();
 const createLLMTranslationModelMock = vi.fn();
 const createShortFictionRunToolMock = vi.fn((_pipeline: unknown, _root: string, _options?: unknown) => ({
@@ -314,6 +320,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     isApiKeyOptionalForEndpoint: actual.isApiKeyOptionalForEndpoint,
     loadSecrets: loadSecretsMock,
     saveSecrets: saveSecretsMock,
+    writeProjectConfigWithRouting: writeProjectConfigWithRoutingMock,
     getServiceApiKey: getServiceApiKeyMock,
     listModelsForService: listModelsForServiceMock,
     getAllEndpoints: getAllEndpointsMock,
@@ -2216,7 +2223,7 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("returns stored service secret for detail page rehydration", async () => {
+  it("returns only masked stored-secret status for detail page rehydration", async () => {
     loadSecretsMock.mockResolvedValue({
       services: {
         moonshot: { apiKey: "sk-moon" },
@@ -2228,7 +2235,26 @@ describe("createStudioServer daemon lifecycle", () => {
 
     const response = await app.request("http://localhost/api/v1/services/moonshot/secret");
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ apiKey: "sk-moon" });
+    const payload = await response.json();
+    expect(payload).toEqual({ configured: true, maskedApiKey: "••••••••" });
+    expect(JSON.stringify(payload)).not.toContain("sk-moon");
+  });
+
+  it("returns only masked cover-secret status", async () => {
+    loadSecretsMock.mockResolvedValue({
+      services: {
+        "cover:kkaiapi": { apiKey: "sk-cover-secret" },
+      },
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/cover/secret/kkaiapi");
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toEqual({ configured: true, maskedApiKey: "sk-c…cret" });
+    expect(JSON.stringify(payload)).not.toContain("sk-cover-secret");
   });
 
   it("rejects non-header-safe service secrets instead of persisting diagnostic text", async () => {

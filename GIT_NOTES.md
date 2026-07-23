@@ -30,6 +30,16 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 
 - 2026-07-23 `1a2fd09b` imported: exact upstream `master` baseline plus 38 release tags; `upstream-sync` created at the same commit.
 - 2026-07-23 `6b72785a` added: repository attribution, durable update semantics, local setup/start launchers, and validation records.
+- 2026-07-23 PR-01 acceptance completed: added the logical-model routing foundation, atomic credential migration, compatibility writers, masked Studio secret reads, and a bounded CLI doctor connectivity probe. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1781, Studio 549, CLI 229 tests).
+
+## Model Continuity Pipeline
+
+- Run id: `model-continuity-p0`; local state is excluded through `.git/info/exclude`.
+- Delivery protocol: one focused feature branch and one atomic commit per PR, fast-forwarded to personal `master` and pushed only to `origin/master` after all gates pass.
+- PR-01 branch: `feature/model-continuity-pr01`.
+- PR-01 commit subject: `feat: add logical model routing foundation`.
+- PR-01 security review: no complete API key/token/Authorization data or runtime/pipeline state is included.
+- PR-01 compatibility boundary: route references execute on the current backend; cross-backend retry/failover remains reserved for PR-03.
 
 ## Rollback Notes
 

@@ -7,10 +7,10 @@ import {
 } from "./service-detail-state";
 
 describe("rehydrateServiceConnectionStatus", () => {
-  it("loads saved key without probing models on page load", async () => {
+  it("loads only saved-key status without exposing the secret or probing models", async () => {
     const fetchJsonImpl = vi.fn(async (path: string) => {
       if (path === "/services/openai/secret") {
-        return { apiKey: "sk-live" };
+        return { configured: true, maskedApiKey: "sk-l…live" };
       }
       throw new Error(`unexpected path: ${path}`);
     });
@@ -28,7 +28,8 @@ describe("rehydrateServiceConnectionStatus", () => {
     expect(fetchJsonImpl).toHaveBeenCalledTimes(1);
     expect(fetchJsonImpl).toHaveBeenCalledWith("/services/openai/secret");
     expect(result).toMatchObject({
-      apiKey: "sk-live",
+      apiKey: "",
+      hasStoredSecret: true,
       detectedModel: "",
       detectedConfig: null,
       status: { state: "idle" },
@@ -61,6 +62,7 @@ describe("saveServiceConfig", () => {
       isCustom: false,
       resolvedCustomName: "",
       apiKey: "",
+      hasStoredSecret: false,
       baseUrl: "",
       apiFormat: "chat",
       stream: true,
@@ -99,6 +101,7 @@ describe("saveServiceConfig", () => {
       isCustom: false,
       resolvedCustomName: "",
       apiKey: "sk-live",
+      hasStoredSecret: false,
       baseUrl: "",
       apiFormat: "chat",
       stream: true,
@@ -147,6 +150,7 @@ describe("saveServiceConfig", () => {
       isCustom: false,
       resolvedCustomName: "",
       apiKey: "sk-live",
+      hasStoredSecret: false,
       baseUrl: "",
       apiFormat: "chat",
       stream: true,
@@ -206,6 +210,7 @@ describe("saveServiceConfig", () => {
       isCustom: false,
       resolvedCustomName: "",
       apiKey: "sk-bad",
+      hasStoredSecret: false,
       baseUrl: "",
       apiFormat: "chat",
       stream: true,
@@ -246,6 +251,7 @@ describe("saveServiceConfig", () => {
       isCustom: true,
       resolvedCustomName: "Local",
       apiKey: "",
+      hasStoredSecret: false,
       baseUrl: "http://127.0.0.1:8001/v1",
       apiFormat: "chat",
       stream: false,
@@ -278,6 +284,43 @@ describe("saveServiceConfig", () => {
       },
     ]);
     expect(result.status).toEqual({ state: "connected", models: [{ id: "qwen3.6:35b-a3b" }] });
+  });
+
+  it("reuses a stored secret without returning or overwriting it", async () => {
+    const calls: string[] = [];
+    const bodies: unknown[] = [];
+    const fetchJsonImpl = vi.fn(async (path: string, init?: { body?: string }) => {
+      calls.push(path);
+      if (init?.body) bodies.push(JSON.parse(init.body));
+      if (path === "/services/openai/test") {
+        return {
+          ok: true,
+          models: [{ id: "gpt-5.5" }],
+          selectedModel: "gpt-5.5",
+        };
+      }
+      if (path === "/services/config") return { ok: true };
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    const result = await saveServiceConfig({
+      effectiveServiceId: "openai",
+      serviceId: "openai",
+      isCustom: false,
+      resolvedCustomName: "",
+      apiKey: "",
+      hasStoredSecret: true,
+      baseUrl: "",
+      apiFormat: "chat",
+      stream: true,
+      temperature: "0.7",
+      detectedModel: "",
+      fetchJsonImpl: fetchJsonImpl as never,
+    });
+
+    expect(calls).toEqual(["/services/openai/test", "/services/config"]);
+    expect(bodies[0]).toEqual({ apiKey: "", apiFormat: "chat", stream: true });
+    expect(result.status).toMatchObject({ state: "connected" });
   });
 });
 

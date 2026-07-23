@@ -48,6 +48,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
 
   // -- Local form state --
   const [apiKey, setApiKey] = useState("");
+  const [hasStoredSecret, setHasStoredSecret] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [customName, setCustomName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -98,6 +99,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       .then((result) => {
         if (cancelled) return;
         setApiKey(result.apiKey);
+        setHasStoredSecret(result.hasStoredSecret);
         setDetectedModel(result.detectedModel);
         setDetectedConfig(result.detectedConfig);
         setStatus(result.status);
@@ -130,7 +132,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   // -- Handlers --
   const handleTest = async () => {
     const trimmedKey = apiKey.trim();
-    if (!trimmedKey && !isCustom) {
+    if (!trimmedKey && !hasStoredSecret && !isCustom) {
       setStatus({ state: "error", message: tr("请先输入 API Key", "Enter an API key first") });
       return;
     }
@@ -207,6 +209,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         isCustom,
         resolvedCustomName,
         apiKey: trimmedKey,
+        hasStoredSecret,
         baseUrl,
         apiFormat,
         stream,
@@ -215,6 +218,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         verifiedProbe,
       });
       if (result.status.state === "connected") {
+        if (trimmedKey) setHasStoredSecret(true);
         if (result.detectedConfig?.apiFormat) setApiFormat(result.detectedConfig.apiFormat);
         if (typeof result.detectedConfig?.stream === "boolean") setStream(result.detectedConfig.stream);
         if (isCustom && result.detectedConfig?.baseUrl) setBaseUrl(result.detectedConfig.baseUrl);
@@ -275,7 +279,8 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           <div className="relative">
             <input
               type={showKey ? "text" : "password"} value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..."
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={hasStoredSecret ? tr("已保存；留空保持不变", "Saved; leave blank to keep") : "sk-..."}
               className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 pr-10 text-sm font-mono"
             />
             <button type="button" onClick={() => setShowKey((v) => !v)}

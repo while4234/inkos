@@ -18,6 +18,8 @@ import {
   resolveCliLanguage,
 } from "../localization.js";
 
+const DOCTOR_CONNECTIVITY_BUDGET_MS = 6_000;
+
 function buildDoctorProbePlans(
   preferredApiFormat: "chat" | "responses" | undefined,
   preferredStream: boolean | undefined,
@@ -311,6 +313,7 @@ export const doctorCommand = new Command("doctor")
         const plans = llmConfig.provider === "openai"
           ? buildDoctorProbePlans(llmConfig.apiFormat, llmConfig.stream)
           : [{ apiFormat: (llmConfig.apiFormat ?? "chat") as "chat" | "responses", stream: llmConfig.stream ?? true }];
+        const connectivitySignal = AbortSignal.timeout(DOCTOR_CONNECTIVITY_BUDGET_MS);
 
         for (const model of modelCandidates) {
           for (const plan of plans) {
@@ -323,7 +326,7 @@ export const doctorCommand = new Command("doctor")
               });
               const response = await chatCompletion(client, model, [
                 { role: "user", content: "Say OK" },
-              ], { maxTokens: 16 });
+              ], { maxTokens: 16, signal: connectivitySignal });
 
               connected = true;
               detectedDetail = `OK (model: ${model}, apiFormat=${plan.apiFormat}, stream=${plan.stream}, tokens: ${response.usage.totalTokens})`;

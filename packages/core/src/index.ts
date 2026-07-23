@@ -1,7 +1,7 @@
 // Models
 export { type BookConfig, type Platform, type Genre, type BookStatus, type FanficMode, type ChapterReviewMode, type RevisionGate, BookConfigSchema, PlatformSchema, GenreSchema, BookStatusSchema, FanficModeSchema, normalizePlatformId, normalizePlatformOrOther, resolveChapterReviewMode, resolveRevisionGate } from "./models/book.js";
 export { type ChapterMeta, type ChapterStatus, ChapterMetaSchema, ChapterStatusSchema } from "./models/chapter.js";
-export { type ProjectConfig, type LLMConfig, type NotifyChannel, type DetectionConfig, type QualityGates, type FoundationConfig, type WritingConfig, type AgentLLMOverride, type InputGovernanceMode, type ResearchSearchConfig, ProjectConfigSchema, LLMConfigSchema, AgentLLMOverrideSchema, DetectionConfigSchema, QualityGatesSchema, FoundationConfigSchema, WritingConfigSchema, InputGovernanceModeSchema, ResearchSearchConfigSchema } from "./models/project.js";
+export { type ProjectConfig, type LLMConfig, type NotifyChannel, type DetectionConfig, type QualityGates, type FoundationConfig, type WritingConfig, type AgentLLMOverride, type ModelOverride, type InputGovernanceMode, type ResearchSearchConfig, ProjectConfigSchema, LLMConfigSchema, AgentLLMOverrideSchema, ModelOverrideValueSchema, DetectionConfigSchema, QualityGatesSchema, FoundationConfigSchema, WritingConfigSchema, InputGovernanceModeSchema, ResearchSearchConfigSchema } from "./models/project.js";
 export { type CurrentState, type ParticleLedger, type PendingHooks, type PendingHook, type LedgerEntry } from "./models/state.js";
 export { type GenreProfile, type ParsedGenreProfile, GenreProfileSchema, parseGenreProfile } from "./models/genre-profile.js";
 export { type BookRules, type ParsedBookRules, BookRulesSchema, parseBookRules, tryParseBookRulesFrontmatter } from "./models/book-rules.js";
@@ -456,7 +456,39 @@ export {
   type ModelInfo,
 } from "./llm/service-presets.js";
 export { resolveServiceModel, type ResolvedModel } from "./llm/service-resolver.js";
-export { loadSecrets, saveSecrets, getServiceApiKey, type SecretsFile } from "./llm/secrets.js";
+export { loadSecrets, saveSecrets, getServiceApiKey, getCredentialApiKey, type SecretsFile } from "./llm/secrets.js";
+export {
+  MODEL_ROUTING_SCHEMA_VERSION,
+  CredentialKindSchema,
+  CredentialMetadataSchema,
+  CredentialRefSchema,
+  BackendTransportSchema,
+  BackendInstanceSchema,
+  LogicalModelCandidateSchema,
+  LogicalModelRouteSchema,
+  ModelRoutingConfigSchema,
+  RouteLLMOverrideSchema,
+  stableRoutingId,
+  resolveLogicalModelRoute,
+  type CredentialKind,
+  type CredentialMetadata,
+  type CredentialRef,
+  type BackendTransport,
+  type BackendInstance,
+  type LogicalModelCandidate,
+  type LogicalModelRoute,
+  type ModelRoutingConfig,
+  type RouteLLMOverride,
+} from "./llm/model-routing.js";
+export {
+  CredentialResolver,
+  ProjectApiKeyCredentialProvider,
+  createProjectCredentialResolver,
+  type CredentialProvider,
+  type ResolvedCredential,
+  type ResolvedApiKeyCredential,
+} from "./llm/credentials/index.js";
+export { writeJsonAtomically } from "./llm/atomic-json.js";
 export {
   COVER_PROVIDER_PRESETS,
   coverSecretKey,
@@ -464,7 +496,12 @@ export {
   type CoverProviderId,
   type CoverProviderPreset,
 } from "./llm/cover-providers.js";
-export { migrateConfig, type MigrationResult } from "./llm/config-migration.js";
+export {
+  migrateConfig,
+  writeProjectConfigWithRouting,
+  type MigrationResult,
+  type ConfigMigrationOptions,
+} from "./llm/config-migration.js";
 export { getAllEndpoints, getEndpoint, type InkosEndpoint, type InkosModel, type EndpointGroup } from "./llm/providers/index.js";
 export { probeModelsFromUpstream, type ProbedModel } from "./llm/providers/probe.js";
 

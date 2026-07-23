@@ -71,18 +71,19 @@ export async function rehydrateServiceConnectionStatus(args: {
   readonly fetchJsonImpl?: JsonFetcher;
 }): Promise<{
   readonly apiKey: string;
+  readonly hasStoredSecret: boolean;
   readonly status: ServiceDetailConnectionStatus;
   readonly detectedModel: string;
   readonly detectedConfig: ServiceDetailDetectedConfig | null;
 }> {
   const fetchJsonImpl = args.fetchJsonImpl ?? fetchJson;
-  const secret = await fetchJsonImpl<{ apiKey?: string }>(
+  const secret = await fetchJsonImpl<{ configured?: boolean; maskedApiKey?: string }>(
     `/services/${encodeURIComponent(args.effectiveServiceId)}/secret`,
   );
-  const apiKey = String(secret.apiKey ?? "");
 
   return {
-    apiKey,
+    apiKey: "",
+    hasStoredSecret: Boolean(secret.configured),
     status: { state: "idle" },
     detectedModel: "",
     detectedConfig: null,
@@ -109,6 +110,7 @@ export async function saveServiceConfig(args: {
   readonly isCustom: boolean;
   readonly resolvedCustomName: string;
   readonly apiKey: string;
+  readonly hasStoredSecret: boolean;
   readonly baseUrl: string;
   readonly apiFormat: "chat" | "responses";
   readonly stream: boolean;
@@ -125,7 +127,7 @@ export async function saveServiceConfig(args: {
   const trimmedKey = args.apiKey.trim();
   const trimmedBaseUrl = args.baseUrl.trim();
 
-  if (!trimmedKey && !args.isCustom) {
+  if (!trimmedKey && !args.isCustom && !args.hasStoredSecret) {
     return {
       status: { state: "error", message: "请先输入 API Key" },
       detectedModel: "",
@@ -189,11 +191,13 @@ export async function saveServiceConfig(args: {
   const savedStream = typeof detectedConfig?.stream === "boolean" ? detectedConfig.stream : args.stream;
   const savedBaseUrl = args.isCustom ? (detectedConfig?.baseUrl ?? trimmedBaseUrl) : undefined;
 
-  await fetchJsonImpl(`/services/${encodeURIComponent(args.effectiveServiceId)}/secret`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey: trimmedKey }),
-  });
+  if (trimmedKey || !args.hasStoredSecret) {
+    await fetchJsonImpl(`/services/${encodeURIComponent(args.effectiveServiceId)}/secret`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: trimmedKey }),
+    });
+  }
 
   await fetchJsonImpl("/services/config", {
     method: "PUT",

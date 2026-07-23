@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -59,6 +59,49 @@ describe("loadProjectConfig local provider auth", () => {
     expect(config.llm.baseUrl).toBe("http://127.0.0.1:11434/v1");
     expect(config.llm.model).toBe("gpt-oss:20b");
     expect(config.llm.apiKey).toBe("");
+  });
+
+  it("migrates legacy config and inline API key during the normal load path", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-config-loader-routing-migration-"));
+    for (const key of ENV_KEYS) {
+      previousEnv.set(key, process.env[key]);
+      process.env[key] = "";
+    }
+
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      name: "legacy-project",
+      version: "0.1.0",
+      language: "zh",
+      llm: {
+        provider: "openai",
+        baseUrl: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        apiKey: "fixture-inline-key",
+      },
+    }, null, 2), "utf-8");
+
+    const first = await loadProjectConfig(root);
+    const firstRaw = await readFile(join(root, "inkos.json"), "utf-8");
+    const second = await loadProjectConfig(root);
+    const secondRaw = await readFile(join(root, "inkos.json"), "utf-8");
+
+    expect(first.llm).toMatchObject({
+      service: "deepseek",
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "deepseek-chat",
+      apiKey: "fixture-inline-key",
+    });
+    expect(second.llm).toMatchObject({
+      service: "deepseek",
+      model: "deepseek-chat",
+      apiKey: "fixture-inline-key",
+    });
+    expect(secondRaw).toBe(firstRaw);
+
+    const persisted = JSON.parse(firstRaw);
+    expect(persisted.llm.apiKey).toBeUndefined();
+    expect(persisted.llm.routing.routes).toHaveLength(1);
+    expect(firstRaw).not.toContain("fixture-inline-key");
   });
 
   it("still requires API keys for remote hosted endpoints", async () => {

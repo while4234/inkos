@@ -6,6 +6,7 @@ import {
 } from "./effective-llm-config.js";
 import { loadLLMEnvLayers, GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH } from "./llm-env.js";
 import { isApiKeyOptionalForEndpoint } from "./llm-endpoint-auth.js";
+import { migrateConfig } from "../llm/config-migration.js";
 
 export { GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH, isApiKeyOptionalForEndpoint };
 
@@ -17,6 +18,7 @@ export async function loadProjectConfig(
     readonly consumer?: LLMConsumer;
   },
 ): Promise<ProjectConfig> {
+  await migrateConfig(root);
   const envLayers = await loadLLMEnvLayers(root);
   const result = await resolveEffectiveLLMConfig({
     consumer: options?.consumer ?? "cli",

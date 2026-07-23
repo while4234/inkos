@@ -276,3 +276,56 @@ Routing summaries persist in the session transcript and restore safely.
 Replayed SSE activity is deduplicated by event ID. Cross-backend
 checkpoint/resume, continuation from partial output, and replay of a partially
 emitted tool call are intentionally not implemented.
+
+## Unified routing trace, usage, and cost
+
+Production tasks and Studio Agent streams emit the same routing trace schema
+(`version: 1`). Each trace contains the logical model, actual backend/model,
+prompt family plus asset revision, ordered attempts and switches, local retry
+counts, safe terminal categories, the visible-output boundary, and final
+status. Safe caller context may add task/session/book/chapter/stage/Agent IDs;
+credentials, raw errors, response bodies, and complete prompts are excluded.
+
+Provider usage is recorded per actual attempt and aggregated per backend.
+Input, output, cache-read, cache-write, and reasoning tokens remain `null` when
+the provider did not report them. A failed partial response is not guessed or
+counted as zero and is not added twice.
+
+Price metadata is optional and belongs to a concrete route candidate:
+
+```json
+{
+  "backendId": "backend-a",
+  "upstreamModelId": "gpt-example",
+  "pricing": {
+    "currency": "USD",
+    "inputPerMillion": 2,
+    "outputPerMillion": 8,
+    "cacheReadPerMillion": 1,
+    "reasoningPerMillion": 8,
+    "source": "provider-contract",
+    "revision": "2026-07"
+  }
+}
+```
+
+InkOS calculates cost only when provider usage and explicit price
+source/revision are both present. Existing model-bank zero placeholders are not
+trusted pricing. Unknown cost stays `null`/`unknown` in trace, API, task
+snapshots, transcripts, and Studio; it is never shown as `$0.00`.
+
+Studio task snapshots are written atomically as version 2 and legacy version 1
+snapshots remain readable. Chapter traces accept an optional `routingTrace`,
+and Agent transcript routing summaries retain their legacy fields plus the
+canonical bounded trace. At most 100 attempts and 50 switches are retained.
+
+After a temporary cooldown expires, only one half-open business request may
+probe recovery; concurrent work skips that backend. Unknown backends use the
+same controlled first attempt. Health probes are single-flight, time-bounded,
+cancellable, and use `/models` without a model-global prompt. Quota recovery
+never guesses a billing period; use explicit reset or a controlled probe.
+Authentication requires credential repair/refresh/reconnect or a successful
+probe, and disabled backends require explicit enablement.
+
+The complete module/data-flow and persistence contract is documented in
+[Model continuity architecture](MODEL_CONTINUITY_ARCHITECTURE.md).

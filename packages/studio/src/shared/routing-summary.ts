@@ -28,6 +28,9 @@ export function reduceRoutingSummary(
   const switches = event.type === "backend_switched"
     ? mergeRoutingActivity(current?.switches ?? [], [event], MAX_TASK_SWITCHES)
     : current?.switches ?? [];
+  const traceTerminalState = event.trace?.finalStatus === "running"
+    ? undefined
+    : event.trace?.finalStatus;
   return {
     logicalModelId: event.logicalModelId,
     logicalModelDisplayName: event.logicalModelDisplayName,
@@ -37,10 +40,14 @@ export function reduceRoutingSummary(
     switches,
     recentEventIds: [...recentEventIds, event.eventId].slice(-MAX_SUMMARY_EVENT_IDS),
     lastEventAt: event.timestamp,
-    terminalState: event.type === "failed"
-      ? event.visibleOutput ? "interrupted" : "failed"
-      : event.type === "succeeded" || event.type === "exhausted"
-        ? event.type
-        : current?.terminalState,
+    terminalState: traceTerminalState
+      ?? (event.trace
+        ? current?.terminalState
+        : event.type === "failed"
+          ? event.visibleOutput ? "interrupted" : "failed"
+          : event.type === "succeeded" || event.type === "exhausted"
+            ? event.type
+            : current?.terminalState),
+    ...(event.trace ? { trace: event.trace } : current?.trace ? { trace: current.trace } : {}),
   };
 }

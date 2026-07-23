@@ -55,7 +55,17 @@ describe("Studio production routing observer", () => {
         enabled: true,
         candidates: [
           { backendId: "backend-a", upstreamModelId: "fixture-model" },
-          { backendId: "backend-b", upstreamModelId: "fixture-model" },
+          {
+            backendId: "backend-b",
+            upstreamModelId: "fixture-model",
+            pricing: {
+              currency: "USD",
+              inputPerMillion: 2,
+              outputPerMillion: 4,
+              source: "fixture-contract",
+              revision: "1",
+            },
+          },
         ],
       }],
       defaultRouteId: "route-ab",
@@ -119,6 +129,30 @@ describe("Studio production routing observer", () => {
       logicalModelDisplayName: "Writer A/B",
       activeBackendId: "backend-b",
       retryCount: 0,
+      trace: {
+        version: 1,
+        finalBackendId: "backend-b",
+        finalModelId: "fixture-model",
+        finalStatus: "succeeded",
+        backends: [
+          {
+            backendId: "backend-a",
+            inputTokens: null,
+            cost: { status: "unknown", amount: null },
+          },
+          {
+            backendId: "backend-b",
+            inputTokens: 1,
+            outputTokens: 1,
+            cost: {
+              status: "known",
+              amount: 0.000006,
+              priceSource: "fixture-contract",
+              priceRevision: "1",
+            },
+          },
+        ],
+      },
     });
     const serialized = JSON.stringify(activity.recent());
     expect(serialized).not.toContain("fixture-a");

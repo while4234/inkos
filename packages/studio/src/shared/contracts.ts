@@ -2,6 +2,7 @@
  * Shared TypeScript contracts for Studio API/UI communication.
  * Ported from PR #96 (Te9ui1a) — prevents client/server type drift.
  */
+import type { RoutingTrace } from "@actalk/inkos-core";
 
 // --- Health ---
 
@@ -228,6 +229,16 @@ export interface BackendInstanceDTO {
 export interface LogicalModelCandidateDTO {
   readonly backendId: string;
   readonly upstreamModelId: string;
+  readonly pricing?: {
+    readonly currency: string;
+    readonly inputPerMillion: number;
+    readonly outputPerMillion: number;
+    readonly cacheReadPerMillion?: number;
+    readonly cacheWritePerMillion?: number;
+    readonly reasoningPerMillion?: number;
+    readonly source: string;
+    readonly revision: string;
+  };
 }
 
 export interface LogicalModelRouteDTO {
@@ -299,6 +310,8 @@ export interface RoutingActivityEventDTO {
   /** Present on current routing events; absent on pre-PR-08 persisted snapshots. */
   readonly visibleOutput?: boolean;
   readonly context?: RoutingActivityContextDTO;
+  /** Bounded canonical trace snapshot at this event. */
+  readonly trace?: RoutingTrace;
 }
 
 export interface SafeAggregateFailureSummaryDTO {
@@ -322,7 +335,8 @@ export interface StudioRoutingSummary {
   /** Bounded replay guard for SSE reconnects and task snapshot restores. */
   readonly recentEventIds?: ReadonlyArray<string>;
   readonly lastEventAt: string | null;
-  readonly terminalState?: "succeeded" | "failed" | "interrupted" | "exhausted";
+  readonly terminalState?: "succeeded" | "failed" | "interrupted" | "cancelled" | "exhausted";
+  readonly trace?: RoutingTrace;
 }
 
 export interface ModelRoutingValidationIssueDTO {

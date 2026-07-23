@@ -5,6 +5,7 @@ import {
   type BackendHealthStore,
   type BackendProbeUpdate,
 } from "./backend-health-store.js";
+import { tryAcquireBackendRecoveryLease } from "./health-recovery.js";
 import { createProjectCredentialResolver, type CredentialResolver } from "./credentials/index.js";
 import {
   abortableRoutingDelay,
@@ -180,14 +181,34 @@ export class ResilientChatRuntime {
       this.now,
       undefined,
       toModelGlobalPromptTrace(promptResolution),
+      options?.routingContext,
     );
     throwIfRoutingCancelled(options?.signal, { logicalModelId: routeId });
     const failures = resolution.skipped.map(skippedCandidateFailure);
+    const healthSnapshot = await this.healthStore.read();
     let switchFrom: { readonly backendId: string; readonly reason: ProviderErrorCategory } | undefined;
 
     for (const resolvedCandidate of resolution.candidates) {
       const backendId = resolvedCandidate.backend.id;
       const upstreamModelId = resolvedCandidate.candidate.upstreamModelId;
+      const recoveryLease = tryAcquireBackendRecoveryLease(
+        this.healthStore,
+        backendId,
+        healthSnapshot.backends[backendId],
+        this.now(),
+      );
+      if (!recoveryLease) {
+        failures.push({
+          backendId,
+          upstreamModelId,
+          attemptNumber: 0,
+          category: "candidate_unavailable",
+          safeReason: "Backend recovery is already being checked by another request.",
+          visibleOutput: false,
+        });
+        continue;
+      }
+      try {
       if (switchFrom) {
         await emitter.emit({
           type: "backend_switched",
@@ -223,6 +244,10 @@ export class ResilientChatRuntime {
           phase: "request",
           backendId,
           upstreamModelId,
+          credentialKind: resolvedCandidate.credential.kind,
+          ...(resolvedCandidate.candidate.pricing
+            ? { pricing: resolvedCandidate.candidate.pricing }
+            : {}),
           retryCount: retriesUsed,
           visibleOutput: false,
         });
@@ -248,13 +273,27 @@ export class ResilientChatRuntime {
           await emitter.emit({
             type: "succeeded",
             phase: "complete",
+            finalStatus: "succeeded",
             backendId,
             upstreamModelId,
+            credentialKind: resolvedCandidate.credential.kind,
+            usage: {
+              inputTokens: response.usage.promptTokens,
+              outputTokens: response.usage.completionTokens,
+              cacheReadTokens: null,
+              cacheWriteTokens: null,
+              reasoningTokens: null,
+              providerObserved: response.usage.totalTokens > 0,
+            },
+            ...(resolvedCandidate.candidate.pricing
+              ? { pricing: resolvedCandidate.candidate.pricing }
+              : {}),
             retryCount: retriesUsed,
             visibleOutput,
           });
           return response;
         } catch (error) {
+          const observedFailureUsage = routingUsageFromUnknown(error);
           let providerError = classifyProviderError(error, {
             backendId,
             logicalModelId: routeId,
@@ -294,8 +333,22 @@ export class ResilientChatRuntime {
           await emitter.emit({
             type: "failed",
             phase: "request",
+            ...(decision.action === "fail"
+              ? {
+                  finalStatus: providerError.cancelled
+                    ? "cancelled" as const
+                    : providerError.visibleOutput
+                      ? "interrupted" as const
+                      : "failed" as const,
+                }
+              : {}),
             backendId,
             upstreamModelId,
+            credentialKind: resolvedCandidate.credential.kind,
+            ...(resolvedCandidate.candidate.pricing
+              ? { pricing: resolvedCandidate.candidate.pricing }
+              : {}),
+            ...(observedFailureUsage ? { usage: observedFailureUsage } : {}),
             reason: providerError.category,
             retryCount: retriesUsed,
             visibleOutput: providerError.visibleOutput,
@@ -350,11 +403,15 @@ export class ResilientChatRuntime {
           break;
         }
       }
+      } finally {
+        recoveryLease.release();
+      }
     }
 
     await emitter.emit({
       type: "exhausted",
       phase: "complete",
+      finalStatus: "exhausted",
       ...(switchFrom ? { backendId: switchFrom.backendId, reason: switchFrom.reason } : {}),
       retryCount: 0,
       visibleOutput: false,
@@ -496,4 +553,39 @@ function shouldRecordBackendFailure(error: ProviderError): boolean {
     && error.category !== "invalid_request"
     && error.category !== "context_overflow"
     && error.category !== "content_policy";
+}
+
+function routingUsageFromUnknown(error: unknown) {
+  if (!error || typeof error !== "object" || !("usage" in error)) return undefined;
+  const usage = (error as { readonly usage?: Record<string, unknown> }).usage;
+  if (!usage) return undefined;
+  const inputTokens = finiteToken(usage.promptTokens ?? usage.inputTokens ?? usage.input);
+  const outputTokens = finiteToken(
+    usage.completionTokens ?? usage.outputTokens ?? usage.output,
+  );
+  const cacheReadTokens = finiteToken(usage.cacheReadTokens ?? usage.cacheRead);
+  const cacheWriteTokens = finiteToken(usage.cacheWriteTokens ?? usage.cacheWrite);
+  const reasoningTokens = finiteToken(usage.reasoningTokens ?? usage.reasoning);
+  const values = [
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+  ];
+  if (!values.some((value) => value !== null)) return undefined;
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+    providerObserved: true,
+  };
+}
+
+function finiteToken(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null;
 }

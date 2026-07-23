@@ -142,6 +142,8 @@ export interface ChatCompletionOptions {
   readonly onTextDelta?: (text: string) => void;
   readonly signal?: AbortSignal;
   readonly errorContext?: ProviderErrorRouteContext;
+  /** Safe operation metadata copied into routing traces; never include prompts or credentials. */
+  readonly routingContext?: import("./routing-trace.js").RoutingTraceContext;
   // Diagnostics / connectivity checks want a fast pass-or-fail — set false to
   // skip the transient 502/503/429 retry+backoff (e.g. the doctor probe).
   readonly retry?: boolean;

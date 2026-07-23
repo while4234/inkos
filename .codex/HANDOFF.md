@@ -1,80 +1,83 @@
 # Project Handoff
 
-Last updated: 2026-07-24 05:03 CST
+Last updated: 2026-07-24 06:14 CST
 Project root: `D:\lnkos`
-Branch: `feature/model-continuity-pr08`
+Branch: `feature/model-continuity-pr09`
 Status: acceptance_passed_uncommitted
 
 ## Current Goal
 
-Accept and deliver PR-08 of `model-continuity-p0`: route Studio Agent streaming
-through the shared continuity runtime with a safe material-output boundary,
-visible routing state, and refresh-compatible partial interruption history.
+Accept and deliver PR-09 of `model-continuity-p0`: unify routing trace,
+per-backend usage/cost, safe persistence, Studio diagnostics, and controlled
+health recovery across production and Agent paths.
 
 ## Current Position
 
-- Branch HEAD is the delivered PR-07 base `a6e00520`; PR-08 is uncommitted.
-- The independent PR-08 implementation agent did not commit, push, or mutate
-  pipeline state; the main-agent audit and acceptance gates have passed.
-- Intended atomic subject: `feat: route studio agent streams`.
+- Branch HEAD is the delivered PR-08 base `95a041c8`; PR-09 is uncommitted.
+- The independent PR-09 implementation agent did not commit, push, switch
+  branches, or mutate pipeline state.
+- Intended atomic subject: `feat: add routing observability and recovery`.
 
 ## Recent Actions
 
-- Added `AgentRouteRuntime`, which reuses route resolution, credential refresh,
-  health, structured error policy, model-family prompts, Codex Responses, and
-  Grok history conversion for pi Agent streams.
-- Added bounded pre-output metadata buffering and a material boundary covering
-  text, forwarded thinking/reasoning, and every tool-call phase. Post-boundary
-  failures cannot retry or switch.
-- Added a per-turn, secret-free backend/model pin. The first material event
-  (including material found only in the terminal `done` message) locks the
-  selected candidate across all later pi streams in that Agent turn. A locked
-  candidate failure interrupts the turn and never re-enters another backend.
-- Added route-only Agent sessions, secret-free revision cache identity,
-  request-current runtime binding, per-candidate context guards, safe transcript
-  summaries, and interrupted partial text/thinking restoration.
-- Routed `/api/v1/agent` through logical routes when configured while preserving
-  unmatched explicit legacy overrides.
-- Added scoped `routing:event` SSE handling, reconnect dedupe, exact current-turn
-  attribution, response summary attachment, and distinct switch/interruption UI.
-- Updated `MODEL_ROUTING.md`, `README.md`, and `GIT_NOTES.md`.
+- Replaced the lightweight routing-event-only model with bounded routing trace
+  schema version 1 and a shared collector for production and Agent events.
+- Added provider-observed attempt/backend usage and explicit candidate pricing
+  with source/revision. Missing usage/price remains `null`/`unknown`.
+- Added safe trace persistence to Agent transcript summaries and optional
+  chapter traces; upgraded Studio task snapshots to atomic version 2 writes
+  with version 1 read compatibility.
+- Added Studio SSE/task/Agent trace details for actual backend/model, switches,
+  retries, per-backend tokens, known/unknown cost, and final state.
+- Added single-flight half-open business recovery for unknown/expired-cooldown
+  backends and timeout/cancel/single-flight probes.
+- Propagated probe cancellation into the upstream fetch, applied the common
+  probe guard to every Studio probe entry point, and made empty model probes
+  fail closed instead of reporting a healthy backend.
+- Made terminal trace status exact for success, exhaustion, cancellation, and
+  interruption; trace construction now fails closed and bounded attempt
+  sequence numbers remain unique.
+- Reset repaired credential backends to a half-open `unknown` state so the next
+  request can recover without a Studio restart.
+- Added architecture/user documentation and retained explicit checkpoint and
+  post-output continuation non-goals.
 
 ## Validation
 
-- Core typecheck/build passed.
-- Full Core suite: 197 files / 1,920 tests passed.
-- Agent route runtime focused suite: 23 tests passed, including A pre-output
-  failover to B, B material output, A health recovery, and B-only next-stream
-  interruption.
-- Agent route runtime + Agent session focused suites: 66 tests passed.
-- Agent session cache/routing: 43 tests passed.
-- Interrupted transcript restore: 1 test passed (partial text and thinking-only).
-- Studio typecheck and client/server build passed (existing chunk-size warning).
-- Full Studio suite: 64 files / 578 tests passed.
-- Studio route-selection/server focused tests: 3 passed.
-- Studio routing store/banner tests: 9 passed.
-- Interrupted thinking-only/tool-only action tests: 2 passed.
-- Full CLI suite: 41 files / 229 tests passed.
-- Repository-level pnpm 9.15.9 frozen install, build, typecheck, test, and
-  publish-manifest verification passed.
-- Repository-external Studio browser smoke loaded the English empty-project
-  workbench and model configuration page at `#/services`; the route-management
-  entry was visible and the browser reported no console errors or warnings.
+- Main acceptance focused Core routing/health/runtime/Agent/schema/inventory
+  suites: 7 files / 96 tests passed.
+- Main acceptance focused Studio task/activity/health/UI suites: 6 files /
+  30 tests passed.
+- Studio server regression suite: 1 file / 151 tests passed.
+- Full repository pnpm 9.15.9 frozen install, build, typecheck, test, and
+  publish-manifest verification passed. Final clean test run: Core 200 files /
+  1932 tests, Studio 64 files / 582 tests, CLI 41 files / 229 tests.
+- A newly reachable Vitest hoisting defect in `server.test.ts` was corrected by
+  deferring the task-store import until after hoisted Core mocks initialize.
+- Root lint accurately reported that no selected workspace package defines a
+  lint script.
+- Repository-external Studio browser smoke loaded `#/model-routing`; the model
+  continuity, backend health, logical route, and recent activity surfaces were
+  visible. Browser console: 0 errors, 0 warnings.
+- Browser snapshot leakage scan found zero fake keys, access/refresh-token
+  fields, Authorization/Bearer values, auth token objects, or full global
+  prompt markers. Temporary browser/content artifacts were removed.
 - `git diff --check` passed; changed/untracked path review found no runtime
-  content or pipeline-state files. Credential-pattern scan found only explicit
-  mock token/header fixtures used by redaction and refresh tests.
+  content or pipeline-state files.
 
 ## Blockers / Risks
 
 - No known implementation blocker.
-- No real LLM, Codex, Grok, OAuth, or refresh request was executed.
-- Cross-backend checkpoint/resume and continuation from partial output are
+- No real LLM, Codex, Grok, OAuth, refresh, quota, or usage request was run.
+- Provider usage unavailable on a failure remains unknown; it is never
+  estimated. Cost is unknown unless explicit price source/revision exists.
+- Step-level checkpointing and continuation from existing visible output remain
   explicitly unsupported.
-- PR-09 still owns unified usage/cost trace and recovery observability.
 
 ## Next Steps
 
-1. Create the atomic PR-08 commit, fast-forward local `master`, push only
-   `origin/master`, verify the remote SHA, then complete PR-08 pipeline state.
-2. Render PR-09 only after the verified push and create a fresh PR-09 feature
-   branch and independent implementation agent.
+1. Complete final diff, path, and credential leakage review.
+2. Create the atomic PR-09 commit, fast-forward local `master`,
+   push only `origin/master`, and verify the remote SHA.
+3. Complete PR-09 pipeline state and run the final nine-stage SHA/state
+   consistency check.

@@ -1,6 +1,6 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { RequestedIntent } from "@actalk/inkos-core";
+import { writeJsonAtomically, type RequestedIntent } from "@actalk/inkos-core";
 import type { StudioRoutingSummary } from "../shared/contracts.js";
 
 export type StudioTaskExecutionStatus = "running" | "processing" | "completed" | "error";
@@ -26,11 +26,15 @@ export interface StudioTaskExecution {
 }
 
 export interface StudioTaskSnapshot {
-  readonly version: 1;
+  readonly version: 2;
   readonly sessionId: string;
   readonly requestedIntent: RequestedIntent;
   readonly execution: StudioTaskExecution;
   readonly updatedAt: number;
+}
+
+export interface LegacyStudioTaskSnapshot extends Omit<StudioTaskSnapshot, "version"> {
+  readonly version: 1;
 }
 
 const TASKS_DIR = ".inkos/tasks";
@@ -53,7 +57,7 @@ function isExecutionStatus(value: unknown): value is StudioTaskExecutionStatus {
 }
 
 function parseStudioTaskSnapshot(value: unknown): StudioTaskSnapshot | null {
-  if (!isRecord(value) || value.version !== 1) return null;
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2)) return null;
   if (typeof value.sessionId !== "string" || typeof value.requestedIntent !== "string") return null;
   if (typeof value.updatedAt !== "number") return null;
   if (!isRecord(value.execution)) return null;
@@ -70,19 +74,21 @@ function parseStudioTaskSnapshot(value: unknown): StudioTaskSnapshot | null {
     return null;
   }
 
-  return value as unknown as StudioTaskSnapshot;
+  return {
+    ...(value as unknown as Omit<StudioTaskSnapshot, "version">),
+    version: 2,
+  };
 }
 
 export async function saveStudioTaskSnapshot(
   projectRoot: string,
-  snapshot: StudioTaskSnapshot,
+  snapshot: StudioTaskSnapshot | LegacyStudioTaskSnapshot,
 ): Promise<void> {
   const path = studioTaskSnapshotPath(projectRoot, snapshot.sessionId);
-  const serialized = `${JSON.stringify(snapshot, null, 2)}\n`;
   const previous = writeQueues.get(path) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(async () => {
     await mkdir(join(projectRoot, TASKS_DIR), { recursive: true });
-    await writeFile(path, serialized, "utf-8");
+    await writeJsonAtomically(path, { ...snapshot, version: 2 });
   });
   writeQueues.set(path, next);
   try {

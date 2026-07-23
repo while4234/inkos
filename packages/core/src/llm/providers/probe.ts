@@ -15,13 +15,15 @@ export async function probeModelsFromUpstream(
   baseUrl: string,
   apiKey: string,
   timeoutMs = 10_000,
+  signal?: AbortSignal,
 ): Promise<ReadonlyArray<ProbedModel>> {
   if (!baseUrl) return [];
   try {
     const modelsUrl = baseUrl.replace(/\/$/, "") + "/models";
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const res = await fetchWithProxy(modelsUrl, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
     });
     if (!res.ok) return [];
     const json = (await res.json()) as { data?: Array<{ id: unknown }> };

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import {
   CodexCredentialStore,
+  FileBackendHealthStore,
   GrokCredentialStore,
   GrokOAuthClient,
   GrokOAuthLoginManager,
@@ -240,6 +241,11 @@ describe("model management API", () => {
       }),
     ]));
 
+    await new FileBackendHealthStore(root).recordFailure({
+      backendId: "backend-codex",
+      status: "auth_required",
+      reason: "credential_refresh_failed",
+    });
     const reimported = await app.request("http://localhost/api/v1/model-auth/codex/credential-codex", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -248,6 +254,8 @@ describe("model management API", () => {
     expect(reimported.status).toBe(200);
     expect(await readFile(join(codexRoot, "auth", "credential-codex.json"), "utf8"))
       .toContain(codexToken("second"));
+    expect((await new FileBackendHealthStore(root).read()).backends["backend-codex"]?.status)
+      .toBe("unknown");
 
     const blocked = await app.request("http://localhost/api/v1/model-auth/codex/credential-codex", {
       method: "DELETE",
@@ -533,11 +541,18 @@ describe("model management API", () => {
 
   it("replaces, keeps out of GET, and explicitly clears an API Key", async () => {
     const replacement = "fixture-replacement-key-99999";
+    await new FileBackendHealthStore(root).recordFailure({
+      backendId: "backend-a",
+      status: "auth_required",
+      reason: "credential_rejected",
+    });
     expect((await app.request("http://localhost/api/v1/model-auth/credential-a", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey: replacement }),
     })).status).toBe(200);
+    expect((await new FileBackendHealthStore(root).read()).backends["backend-a"]?.status)
+      .toBe("unknown");
 
     const statusText = await (await app.request("http://localhost/api/v1/model-auth")).text();
     expect(statusText).not.toContain(replacement);
@@ -558,6 +573,7 @@ describe("model management API", () => {
     expect(probe).toHaveBeenCalledWith(
       expect.objectContaining({ id: "backend-a" }),
       SECRET,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     const probeText = await probeResponse.text();
     expect(probeText).not.toContain(SECRET);
@@ -572,6 +588,26 @@ describe("model management API", () => {
       lastProbe: { outcome: "success" },
     });
     expect((await app.request("http://localhost/api/v1/model-health/backend-a/reset", { method: "POST" })).status).toBe(200);
+  });
+
+  it("single-flights concurrent backend probes", async () => {
+    let release!: () => void;
+    probe.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return { ok: true, modelCount: 2 };
+    });
+    const first = app.request("http://localhost/api/v1/model-health/backend-a/probe", {
+      method: "POST",
+    });
+    const second = app.request("http://localhost/api/v1/model-health/backend-a/probe", {
+      method: "POST",
+    });
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+    release();
+    await expect(Promise.all([first, second]).then((responses) =>
+      responses.map((response) => response.status)
+    )).resolves.toEqual([200, 200]);
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 });
 

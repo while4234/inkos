@@ -2,6 +2,7 @@ import { AlertTriangle, GitBranch } from "lucide-react";
 import type { AgentRoutingSummary } from "@actalk/inkos-core";
 import type { StudioRoutingSummary } from "../../shared/contracts";
 import { tr } from "../../lib/app-language";
+import { RoutingTraceDetails } from "./RoutingTraceDetails";
 
 export interface AgentRoutingBannerProps {
   readonly summary?: StudioRoutingSummary;
@@ -46,6 +47,7 @@ export function AgentRoutingBanner({
               {tr("已尝试", "Attempted")}: {attempted.join(", ")}
             </span>
           ) : null}
+          <RoutingTraceDetails trace={summary?.trace ?? result?.trace} />
         </span>
       </div>
     );
@@ -63,7 +65,7 @@ export function AgentRoutingBanner({
       role="status"
     >
       <GitBranch size={14} className="shrink-0" />
-      <span>
+      <span className="min-w-0 flex-1">
         <span className="font-medium">
           {summary?.logicalModelDisplayName ?? result?.logicalModelId ?? summary?.logicalModelId}
         </span>
@@ -74,6 +76,7 @@ export function AgentRoutingBanner({
         {liveSwitch?.reason || persistedSwitch?.reason
           ? ` (${liveSwitch?.reason ?? persistedSwitch?.reason})`
           : ""}
+        <RoutingTraceDetails trace={summary?.trace ?? result?.trace} />
       </span>
     </div>
   );

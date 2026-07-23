@@ -2748,7 +2748,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   ): Promise<void> => {
     if (deletedSessionIds.has(sessionId)) return;
     const snapshot: StudioTaskSnapshot = {
-      version: 1,
+      version: 2,
       sessionId,
       requestedIntent,
       updatedAt: Date.now(),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RoutingTraceSchema } from "../llm/routing-trace.js";
 
 export const ChapterMemoSchema = z.object({
   chapter: z.number().int().min(1),
@@ -120,6 +121,8 @@ export const ChapterTraceSchema = z.object({
     compressibleTokens: z.number().int().nonnegative().default(0),
     budgetTokens: z.number().int().nonnegative().default(0),
   }).optional(),
+  /** Safe model-continuity summary. Older chapter traces omit this field. */
+  routingTrace: RoutingTraceSchema.optional(),
   notes: z.array(z.string()).default([]),
 });
 

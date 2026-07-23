@@ -69,4 +69,64 @@ describe("AgentRoutingBanner", () => {
     expect(interrupted).toContain("gpt-route");
     expect(interrupted).not.toMatch(/authorization|bearer|api.?key|system prompt/i);
   });
+
+  it("renders per-backend unknown usage and cost without a fake zero price", () => {
+    const html = renderToStaticMarkup(React.createElement(AgentRoutingBanner, {
+      summary: {
+        logicalModelId: "agent-default",
+        logicalModelDisplayName: "Studio Agent",
+        activeBackendId: "backend-b",
+        retryCount: 0,
+        switches: [{
+          eventId: "request:2",
+          requestId: "request",
+          type: "backend_switched",
+          timestamp: "2026-07-24T00:00:00.000Z",
+          logicalModelId: "agent-default",
+          logicalModelDisplayName: "Studio Agent",
+          phase: "selection",
+          fromBackendId: "backend-a",
+          toBackendId: "backend-b",
+          reason: "quota",
+          retryCount: 0,
+        }],
+        lastEventAt: "2026-07-24T00:00:00.000Z",
+        trace: {
+          version: 1,
+          requestId: "request",
+          operationId: "request",
+          logicalModelId: "agent-default",
+          logicalModelDisplayName: "Studio Agent",
+          prompt: null,
+          context: {},
+          attempts: [],
+          switches: [],
+          backends: [{
+            backendId: "backend-a",
+            attemptCount: 1,
+            localRetryCount: 0,
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+            reasoningTokens: null,
+            cost: {
+              status: "unknown",
+              amount: null,
+              currency: null,
+              priceSource: null,
+              priceRevision: null,
+            },
+          }],
+          visibleOutput: false,
+          finalBackendId: "backend-b",
+          finalModelId: "model-b",
+          finalStatus: "succeeded",
+        },
+      },
+    }));
+    expect(html).toContain("backend-a");
+    expect(html).toContain("unknown");
+    expect(html).not.toContain("$0.00");
+  });
 });

@@ -15,6 +15,7 @@ import {
   FileBackendHealthStore,
   type BackendHealthStore,
 } from "../llm/backend-health-store.js";
+import { tryAcquireBackendRecoveryLease } from "../llm/health-recovery.js";
 import {
   createProjectCredentialResolver,
   type CredentialResolver,
@@ -48,6 +49,7 @@ import {
 import {
   RoutingEventEmitter,
   type RoutingEventObserver,
+  type RoutingTraceContext,
 } from "../llm/routing-trace.js";
 import {
   CODEX_ORIGINATOR,
@@ -70,6 +72,8 @@ export interface AgentRouteStreamOptions {
   readonly onTerminalError?: (error: ProviderError | AgentRouteExhaustedError) => void;
   /** Shared by every pi stream invocation in one Agent turn. */
   readonly continuity?: AgentRouteContinuity;
+  /** Safe operation metadata copied into the unified routing trace. */
+  readonly routingContext?: RoutingTraceContext;
 }
 
 export interface AgentRouteContinuity {
@@ -250,6 +254,7 @@ export class AgentRouteRuntime {
         this.now,
         undefined,
         toModelGlobalPromptTrace(promptResolution),
+        routeOptions.routingContext,
       );
       const relevantSkipped = lockedCandidate
         ? resolution.skipped.filter((candidate) =>
@@ -264,6 +269,7 @@ export class AgentRouteRuntime {
         await emitter.emit({
           type: "exhausted",
           phase: "complete",
+          finalStatus: "interrupted",
           backendId: lockedCandidate.backendId,
           upstreamModelId: lockedCandidate.upstreamModelId,
           reason: "candidate_unavailable",
@@ -284,12 +290,32 @@ export class AgentRouteRuntime {
         return;
       }
       let switchFrom: { readonly backendId: string; readonly reason: ProviderErrorCategory } | undefined;
+      const healthSnapshot = await this.healthStore.read();
 
       throwIfCancelled(signal, reference.routeId);
       for (const resolvedCandidate of resolution.candidates) {
         throwIfCancelled(signal, reference.routeId);
         const backendId = resolvedCandidate.backend.id;
         const upstreamModelId = resolvedCandidate.candidate.upstreamModelId;
+        const recoveryLease = tryAcquireBackendRecoveryLease(
+          this.healthStore,
+          backendId,
+          healthSnapshot.backends[backendId],
+          this.now(),
+        );
+        if (!recoveryLease) {
+          failures.push({
+            backendId,
+            logicalModelId: reference.routeId,
+            upstreamModelId,
+            attemptNumber: 0,
+            category: "model_unavailable",
+            safeReason: "Backend recovery is already being checked by another request.",
+            visibleOutput: false,
+          });
+          continue;
+        }
+        try {
         if (switchFrom) {
           await emitter.emit({
             type: "backend_switched",
@@ -315,6 +341,10 @@ export class AgentRouteRuntime {
             phase: "request",
             backendId,
             upstreamModelId,
+            credentialKind: credential.kind,
+            ...(resolvedCandidate.candidate.pricing
+              ? { pricing: resolvedCandidate.candidate.pricing }
+              : {}),
             retryCount: retriesUsed,
             visibleOutput: false,
           });
@@ -335,8 +365,14 @@ export class AgentRouteRuntime {
             await emitter.emit({
               type: "succeeded",
               phase: "complete",
+              finalStatus: "succeeded",
               backendId,
               upstreamModelId,
+              credentialKind: credential.kind,
+              usage: routingUsageFromAssistantMessage(attempt.terminalEvent.message),
+              ...(resolvedCandidate.candidate.pricing
+                ? { pricing: resolvedCandidate.candidate.pricing }
+                : {}),
               retryCount: retriesUsed,
               visibleOutput: attempt.visibleOutput,
             });
@@ -372,6 +408,22 @@ export class AgentRouteRuntime {
           ) {
             forcedRefreshUsed = true;
             try {
+              await emitter.emit({
+                type: "failed",
+                phase: "request",
+                backendId,
+                upstreamModelId,
+                credentialKind: credential.kind,
+                ...(resolvedCandidate.candidate.pricing
+                  ? { pricing: resolvedCandidate.candidate.pricing }
+                  : {}),
+                ...(attempt.lastMessage
+                  ? { usage: routingUsageFromAssistantMessage(attempt.lastMessage) }
+                  : {}),
+                reason: "auth",
+                retryCount: retriesUsed,
+                visibleOutput: false,
+              });
               credential = await credential.refresh(true, { signal });
               retriesUsed += 1;
               await emitter.emit({
@@ -435,17 +487,31 @@ export class AgentRouteRuntime {
                 : {}),
             });
           }
-          if (!providerError.cancelled) {
-            await emitter.emit({
-              type: "failed",
-              phase: "request",
-              backendId,
-              upstreamModelId,
-              reason: providerError.category,
-              retryCount: retriesUsed,
-              visibleOutput: providerError.visibleOutput,
-            });
-          }
+          await emitter.emit({
+            type: "failed",
+            phase: "request",
+            ...(decision.action === "fail"
+              ? {
+                  finalStatus: providerError.cancelled
+                    ? "cancelled" as const
+                    : providerError.visibleOutput
+                      ? "interrupted" as const
+                      : "failed" as const,
+                }
+              : {}),
+            backendId,
+            upstreamModelId,
+            credentialKind: credential.kind,
+            ...(resolvedCandidate.candidate.pricing
+              ? { pricing: resolvedCandidate.candidate.pricing }
+              : {}),
+            ...(attempt.lastMessage
+              ? { usage: routingUsageFromAssistantMessage(attempt.lastMessage) }
+              : {}),
+            reason: providerError.category,
+            retryCount: retriesUsed,
+            visibleOutput: providerError.visibleOutput,
+          });
 
           if (decision.action === "fail") {
             const terminal = providerError.withAttempts(failures);
@@ -470,11 +536,15 @@ export class AgentRouteRuntime {
           switchFrom = { backendId, reason: providerError.category };
           break;
         }
+        } finally {
+          recoveryLease.release();
+        }
       }
 
       await emitter.emit({
         type: "exhausted",
         phase: "complete",
+        finalStatus: "exhausted",
         ...(switchFrom ? { backendId: switchFrom.backendId, reason: switchFrom.reason } : {}),
         retryCount: 0,
         visibleOutput: false,
@@ -988,4 +1058,35 @@ function cloneValue<T>(value: T): T {
 
 function safeField(value: string): string {
   return value.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 80) || "unknown";
+}
+
+function routingUsageFromAssistantMessage(message: AssistantMessage) {
+  const usage = message.usage;
+  const inputTokens = finiteToken(usage?.input);
+  const outputTokens = finiteToken(usage?.output);
+  const cacheReadTokens = finiteToken(usage?.cacheRead);
+  const cacheWriteTokens = finiteToken(usage?.cacheWrite);
+  const reasoningTokens = finiteToken(
+    (usage as { readonly reasoning?: number } | undefined)?.reasoning,
+  );
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+    providerObserved: [
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      reasoningTokens,
+    ].some((value) => value !== null && value > 0),
+  };
+}
+
+function finiteToken(value: number | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null;
 }

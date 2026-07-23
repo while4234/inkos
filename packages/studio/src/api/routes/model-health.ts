@@ -2,6 +2,8 @@ import {
   FileBackendHealthStore,
   classifyProviderError,
   probeModelsFromUpstream,
+  runBackendProbeSingleFlight,
+  withProbeTimeout,
   type BackendInstance,
 } from "@actalk/inkos-core";
 import type { Hono } from "hono";
@@ -19,6 +21,7 @@ export interface StudioBackendProbeResult {
 export type StudioBackendProbe = (
   backend: BackendInstance,
   apiKey: string,
+  options?: { readonly signal?: AbortSignal },
 ) => Promise<StudioBackendProbeResult>;
 
 export interface ModelHealthRouteOptions {
@@ -38,6 +41,18 @@ export function registerModelHealthRoutes(
     return healthStore;
   };
   const probe = options.probe ?? defaultBackendProbe;
+  const runProbe = (
+    backend: BackendInstance,
+    apiKey: string,
+    signal?: AbortSignal,
+  ) => runBackendProbeSingleFlight(
+    getHealthStore(),
+    backend.id,
+    () => withProbeTimeout(
+      (probeSignal) => probe(backend, apiKey, { signal: probeSignal }),
+      { timeoutMs: 10_000, signal },
+    ),
+  );
 
   app.get("/api/v1/model-health", async (c) => {
     const [{ routing }, health] = await Promise.all([store.read(), getHealthStore().read()]);
@@ -79,7 +94,7 @@ export function registerModelHealthRoutes(
     const apiKey = secrets.credentials?.[backend.credentialRef.id]?.apiKey;
     if (!apiKey) throw new ApiError(409, "MODEL_CREDENTIAL_NOT_CONFIGURED", "Configure the backend API Key before probing it.");
 
-    const result = await probe(backend, apiKey);
+    const result = await runProbe(backend, apiKey, c.req.raw.signal);
     const record = await getHealthStore().recordProbe({
       backendId,
       outcome: result.ok ? "success" : "failure",
@@ -104,7 +119,7 @@ export function registerModelHealthRoutes(
     if (!backend) throw new ApiError(404, "MODEL_BACKEND_NOT_FOUND", `Backend "${backendId}" was not found.`);
     const apiKey = secrets.credentials?.[backend.credentialRef.id]?.apiKey;
     if (!apiKey) throw new ApiError(409, "MODEL_CREDENTIAL_NOT_CONFIGURED", "Configure the backend API Key before testing it.");
-    const result = await probe(backend, apiKey);
+    const result = await runProbe(backend, apiKey, c.req.raw.signal);
     return c.json(result, result.ok ? 200 : 502);
   });
 
@@ -122,7 +137,7 @@ export function registerModelHealthRoutes(
         attempts.push({ backendId: backend.id, ok: false, modelCount: 0, reason: "credential_not_configured" });
         continue;
       }
-      const result = await probe(backend, apiKey);
+      const result = await runProbe(backend, apiKey, c.req.raw.signal);
       attempts.push({ backendId: backend.id, ...result });
       if (result.ok) break;
     }
@@ -133,10 +148,23 @@ export function registerModelHealthRoutes(
 async function defaultBackendProbe(
   backend: BackendInstance,
   apiKey: string,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<StudioBackendProbeResult> {
   try {
     // /models has no chat payload, so no model-global prompt can be injected.
-    const models = await probeModelsFromUpstream(backend.baseUrl, apiKey, 10_000);
+    const models = await probeModelsFromUpstream(
+      backend.baseUrl,
+      apiKey,
+      10_000,
+      options?.signal,
+    );
+    if (models.length === 0) {
+      return {
+        ok: false,
+        modelCount: 0,
+        reason: "The backend probe returned no usable models.",
+      };
+    }
     return { ok: true, modelCount: models.length };
   } catch (error) {
     const providerError = classifyProviderError(error);

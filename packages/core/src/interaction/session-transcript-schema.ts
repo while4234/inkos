@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RoutingTraceSchema } from "../llm/routing-trace.js";
 import { PlayModeSchema, SessionKindSchema, type PlayMode, type SessionKind } from "./session.js";
 export type { SessionKind };
 export type { PlayMode };
@@ -72,6 +73,7 @@ export const RoutingSummaryEventSchema = BaseEventSchema.extend({
   promptRevision: z.number().int().nonnegative().nullable(),
   retryCount: z.number().int().nonnegative(),
   terminalState: z.enum(["succeeded", "failed", "interrupted", "exhausted", "cancelled"]),
+  trace: RoutingTraceSchema.optional(),
 });
 
 export const MessageEventSchema = BaseEventSchema.extend({

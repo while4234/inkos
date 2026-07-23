@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -36,7 +36,7 @@ describe("Studio task snapshots", () => {
     });
 
     await expect(loadStudioTaskSnapshot(root, "session-1")).resolves.toEqual({
-      version: 1,
+      version: 2,
       sessionId: "session-1",
       requestedIntent: "short_run",
       updatedAt: 20,
@@ -49,6 +49,32 @@ describe("Studio task snapshots", () => {
         logs: ["正在生成大纲"],
       },
     });
+  });
+
+  it("upgrades a legacy v1 snapshot in memory without breaking its task", async () => {
+    const path = studioTaskSnapshotPath(root, "legacy-session");
+    await mkdir(join(root, ".inkos", "tasks"), { recursive: true });
+    await writeFile(path, JSON.stringify({
+      version: 1,
+      sessionId: "legacy-session",
+      requestedIntent: "write_next",
+      updatedAt: 20,
+      execution: {
+        id: "legacy-task",
+        tool: "sub_agent",
+        label: "write",
+        status: "completed",
+        startedAt: 10,
+        completedAt: 20,
+      },
+    }), "utf-8");
+
+    await expect(loadStudioTaskSnapshot(root, "legacy-session")).resolves.toMatchObject({
+      version: 2,
+      sessionId: "legacy-session",
+      execution: { id: "legacy-task", status: "completed" },
+    });
+    expect(JSON.parse(await readFile(path, "utf-8")).version).toBe(1);
   });
 
   it("serializes overlapping progress writes and keeps the newest snapshot", async () => {

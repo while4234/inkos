@@ -494,6 +494,7 @@ export {
   CredentialMetadataSchema,
   CredentialRefSchema,
   BackendTransportSchema,
+  ModelPriceMetadataSchema,
   BackendInstanceSchema,
   LogicalModelCandidateSchema,
   PromptFamilySchema,
@@ -506,6 +507,7 @@ export {
   type CredentialMetadata,
   type CredentialRef,
   type BackendTransport,
+  type ModelPriceMetadata,
   type BackendInstance,
   type LogicalModelCandidate,
   type PromptFamily,
@@ -623,6 +625,12 @@ export {
   type BackendHealthStore,
 } from "./llm/backend-health-store.js";
 export {
+  tryAcquireBackendRecoveryLease,
+  runBackendProbeSingleFlight,
+  withProbeTimeout,
+  type BackendRecoveryLease,
+} from "./llm/health-recovery.js";
+export {
   BackendPool,
   type CandidateSkipReason,
   type SkippedBackendCandidate,
@@ -639,12 +647,29 @@ export {
   type FailoverDecision,
 } from "./llm/failover-policy.js";
 export {
+  ROUTING_TRACE_SCHEMA_VERSION,
+  MAX_ROUTING_TRACE_ATTEMPTS,
+  MAX_ROUTING_TRACE_SWITCHES,
   ROUTING_EVENT_TYPES,
   RoutingEventEmitter,
+  RoutingTraceCollector,
+  RoutingTraceSchema,
+  RoutingTokenUsageSchema,
+  RoutingCostSchema,
+  buildRoutingTrace,
+  normalizeRoutingUsage,
+  calculateRoutingCost,
   type RoutingEventType,
   type RoutingEventPhase,
   type RoutingEvent,
   type RoutingEventObserver,
+  type RoutingTrace,
+  type RoutingTraceAttempt,
+  type RoutingTraceContext,
+  type RoutingFinalStatus,
+  type RoutingTokenUsage,
+  type RoutingCost,
+  type RoutingBackendAggregate,
 } from "./llm/routing-trace.js";
 export {
   createRouteAwareLLMClient,

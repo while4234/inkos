@@ -198,6 +198,7 @@ describe("AgentRouteRuntime", () => {
   });
 
   it("forces a Codex credential refresh once, keeps Responses semantics, and never stores the token in revision", async () => {
+    const routingEvents: RoutingEvent[] = [];
     const refresh = vi.fn(async (): Promise<ResolvedCodexCredential> => ({
       kind: "codex",
       accessToken: "fresh-token-value",
@@ -219,6 +220,7 @@ describe("AgentRouteRuntime", () => {
         refresh,
       },
       apiFormat: "responses",
+      observer: (event) => routingEvents.push(event),
     });
 
     const reference = runtime.runtime.reference("route-main");
@@ -236,6 +238,13 @@ describe("AgentRouteRuntime", () => {
     expect(calls[0]?.headers).toMatchObject({ "chatgpt-account-id": "acct-1" });
     expect(reference.revision).not.toContain("token");
     expect(received.at(-1)?.type).toBe("done");
+    expect(routingEvents.map((event) => event.type)).toEqual([
+      "attempt_started",
+      "failed",
+      "local_retry",
+      "attempt_started",
+      "succeeded",
+    ]);
   });
 
   it("forces Grok refresh once, marks auth-required on repeated auth, and uses chat transport", async () => {

@@ -72,7 +72,13 @@ import {
   type AgentRouteContinuity,
   type AgentRouteReference,
 } from "./agent-route-runtime.js";
-import type { RoutingEvent, RoutingEventObserver } from "../llm/routing-trace.js";
+import {
+  buildRoutingTrace,
+  RoutingTraceSchema,
+  type RoutingEvent,
+  type RoutingEventObserver,
+  type RoutingTrace,
+} from "../llm/routing-trace.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,6 +181,8 @@ export interface AgentRoutingSummary {
   readonly promptRevision: number | null;
   readonly retryCount: number;
   readonly terminalState: "succeeded" | "failed" | "interrupted" | "exhausted" | "cancelled";
+  /** Versioned, bounded trace shared with production routing. */
+  readonly trace?: RoutingTrace;
 }
 
 export interface AgentSessionAttachment {
@@ -217,6 +225,14 @@ interface CachedAgent {
     observer?: RoutingEventObserver;
     route?: AgentSessionConfig["route"];
     continuity: AgentRouteContinuity;
+    context: {
+      sessionId: string;
+      taskId?: string;
+      operationId?: string;
+      bookId?: string;
+      stage: string;
+      agent: string;
+    };
   };
   lastCommittedSeq: number;
   lastActive: number;
@@ -873,6 +889,7 @@ function summarizeAgentRouting(
             ? "succeeded"
             : "failed";
   const prompt = first.modelGlobalPrompt;
+  const trace = buildRoutingTrace(events, { finalStatus: terminalState });
   return {
     logicalModelId: safeRoutingSummaryField(first.logicalModelId),
     attempts,
@@ -885,6 +902,7 @@ function summarizeAgentRouting(
       : null,
     retryCount: events.filter((event) => event.type === "local_retry").length,
     terminalState,
+    ...(trace ? { trace } : {}),
   };
 }
 
@@ -1181,6 +1199,12 @@ async function runAgentSessionUnlocked(
       observer: config.route?.onRoutingEvent,
       route: config.route,
       continuity: { material: false },
+      context: {
+        sessionId,
+        ...(bookId ? { bookId } : {}),
+        stage: "agent",
+        agent: "studio-agent",
+      },
     };
     const restoredHistory = await restoreAgentMessagesFromTranscript(projectRoot, sessionId, sessionKind);
     if (restoredHistory.length > 0) {
@@ -1267,6 +1291,7 @@ async function runAgentSessionUnlocked(
                 routingCapture.terminalError = error;
               },
               continuity: routingCapture.continuity,
+              routingContext: routingCapture.context,
             },
           );
         }
@@ -1319,6 +1344,14 @@ async function runAgentSessionUnlocked(
 
   // ----- Prepare transcript persistence -----
   const requestId = randomUUID();
+  cached.routingCapture.context = {
+    sessionId,
+    taskId: requestId,
+    operationId: requestId,
+    ...(bookId ? { bookId } : {}),
+    stage: "agent",
+    agent: "studio-agent",
+  };
   await ensureSessionCreatedEvent(projectRoot, sessionId, bookId, sessionKind);
   await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
     type: "request_started",
@@ -1411,6 +1444,7 @@ async function runAgentSessionUnlocked(
       cached.routingCapture.terminalError,
     );
     if (!routingSummary) return;
+    const { trace, ...legacySummary } = routingSummary;
     await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
       type: "routing_summary",
       version: 1,
@@ -1418,9 +1452,12 @@ async function runAgentSessionUnlocked(
       requestId,
       seq,
       timestamp: Date.now(),
-      ...routingSummary!,
-      attempts: [...routingSummary!.attempts],
-      switches: [...routingSummary!.switches],
+      ...legacySummary,
+      attempts: [...legacySummary.attempts],
+      switches: [...legacySummary.switches],
+      ...(trace
+        ? { trace: RoutingTraceSchema.parse(trace) }
+        : {}),
     }));
     routingSummaryPersisted = true;
   };

@@ -30,6 +30,17 @@ export const BackendTransportSchema = z.object({
   stream: z.boolean().default(true),
 }).strict();
 
+export const ModelPriceMetadataSchema = z.object({
+  currency: z.string().min(3).max(8),
+  inputPerMillion: z.number().nonnegative(),
+  outputPerMillion: z.number().nonnegative(),
+  cacheReadPerMillion: z.number().nonnegative().optional(),
+  cacheWritePerMillion: z.number().nonnegative().optional(),
+  reasoningPerMillion: z.number().nonnegative().optional(),
+  source: z.string().min(1).max(120),
+  revision: z.string().min(1).max(80),
+}).strict();
+
 export const BackendInstanceSchema = z.object({
   id: StableIdSchema,
   displayName: z.string().min(1),
@@ -44,6 +55,7 @@ export const BackendInstanceSchema = z.object({
 export const LogicalModelCandidateSchema = z.object({
   backendId: StableIdSchema,
   upstreamModelId: z.string().min(1),
+  pricing: ModelPriceMetadataSchema.optional(),
 }).strict();
 
 export const PromptFamilySchema = z.enum([
@@ -150,6 +162,7 @@ export type CredentialKind = z.infer<typeof CredentialKindSchema>;
 export type CredentialMetadata = z.infer<typeof CredentialMetadataSchema>;
 export type CredentialRef = z.infer<typeof CredentialRefSchema>;
 export type BackendTransport = z.infer<typeof BackendTransportSchema>;
+export type ModelPriceMetadata = z.infer<typeof ModelPriceMetadataSchema>;
 export type BackendInstance = z.infer<typeof BackendInstanceSchema>;
 export type LogicalModelCandidate = z.infer<typeof LogicalModelCandidateSchema>;
 export type PromptFamily = z.infer<typeof PromptFamilySchema>;

@@ -1484,9 +1484,16 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(calls).toEqual(["backend-a", "backend-b"]);
     expect(first.routingSummary?.actualBackendId).toBe("backend-a");
     expect(second.routingSummary?.actualBackendId).toBe("backend-b");
+    expect(first.routingSummary?.trace).toMatchObject({
+      version: 1,
+      logicalModelId: "agent-default",
+      finalBackendId: "backend-a",
+      finalStatus: "succeeded",
+    });
     const events = await readTranscriptEvents(projectRoot, "s-route-runtime-refresh");
     const summaries = events.filter((event) => event.type === "routing_summary");
     expect(summaries).toHaveLength(2);
+    expect(summaries.every((summary) => summary.trace?.version === 1)).toBe(true);
     expect(JSON.stringify(summaries)).not.toMatch(/api[_-]?key|authorization|bearer/i);
   });
 

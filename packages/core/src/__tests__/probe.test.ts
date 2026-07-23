@@ -74,4 +74,33 @@ describe("probeModelsFromUpstream", () => {
     const result = await probeModelsFromUpstream("https://api.example.com/v1", "sk-test");
     expect(result).toEqual([{ id: "valid", name: "valid", contextWindow: 0 }]);
   });
+
+  it("把调用方取消信号传到实际 fetch", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    (globalThis.fetch as any).mockImplementation(
+      async (_input: unknown, init: RequestInit) => {
+        receivedSignal = init.signal as AbortSignal;
+        await new Promise<never>((_resolve, reject) => {
+          receivedSignal!.addEventListener(
+            "abort",
+            () => reject(receivedSignal!.reason),
+            { once: true },
+          );
+        });
+      },
+    );
+
+    const pending = probeModelsFromUpstream(
+      "https://api.example.com/v1",
+      "sk-test",
+      10_000,
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(receivedSignal).toBeDefined());
+    controller.abort(new DOMException("cancelled", "AbortError"));
+
+    await expect(pending).resolves.toEqual([]);
+    expect(receivedSignal?.aborted).toBe(true);
+  });
 });

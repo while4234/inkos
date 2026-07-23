@@ -1,6 +1,7 @@
 import {
   CodexCredentialError,
   CodexCredentialStore,
+  FileBackendHealthStore,
   GrokCredentialStore,
   GrokOAuthError,
   GrokOAuthLoginManager,
@@ -147,6 +148,7 @@ export function registerModelAuthRoutes(
         c.req.raw.signal,
       );
       const revision = await ensureGrokMetadata(store, pending);
+      await recoverCredentialBackends(store, pending.credentialId);
       grok.loginManager.cancel(sessionId);
       return c.json({ ok: true, revision, credential });
     } catch (error) {
@@ -184,6 +186,7 @@ export function registerModelAuthRoutes(
         return c.text("Grok login session is unavailable. Return to Studio and start again.", 410);
       }
       await ensureGrokMetadata(store, pending);
+      await recoverCredentialBackends(store, pending.credentialId);
       return c.text(
         `Grok account ${completed.credential.accountHint ?? "connected"} connected. Return to Studio.`,
       );
@@ -203,9 +206,12 @@ export function registerModelAuthRoutes(
 
   app.post("/api/v1/model-auth/grok/:credentialId/active", async (c) => {
     try {
+      const credentialId = c.req.param("credentialId");
+      const credential = await grok.store.setActive(credentialId);
+      await recoverCredentialBackends(store, credentialId);
       return c.json({
         ok: true,
-        credential: await grok.store.setActive(c.req.param("credentialId")),
+        credential,
       });
     } catch (error) {
       throw toGrokApiError(error);
@@ -252,6 +258,7 @@ export function registerModelAuthRoutes(
         label,
         scope: "user",
       });
+      await recoverCredentialBackends(store, credentialId);
       return c.json({
         revision: updated.revision,
         credential: status,
@@ -284,6 +291,7 @@ export function registerModelAuthRoutes(
         label,
         scope: "user",
       });
+      await recoverCredentialBackends(store, credentialId);
       return c.json({
         revision: updated.revision,
         credential: status,
@@ -303,6 +311,7 @@ export function registerModelAuthRoutes(
         bytes: new TextEncoder().encode(content),
         safeFileName: optionalString(body.fileName, "fileName"),
       });
+      await recoverCredentialBackends(store, c.req.param("credentialId"));
       return c.json({ ok: true, credential: status });
     } catch (error) {
       throw toCodexApiError(error);
@@ -335,6 +344,7 @@ export function registerModelAuthRoutes(
       }, 400);
     }
     await store.replaceApiKey(c.req.param("credentialId"), trimmed);
+    await recoverCredentialBackends(store, c.req.param("credentialId"));
     return c.json({ ok: true });
   });
 
@@ -383,6 +393,32 @@ async function ensureGrokMetadata(
     scope: "user",
   });
   return updated.revision;
+}
+
+/**
+ * A replaced or reconnected credential moves its bound backends from
+ * auth-required to unknown. The next real request is still protected by the
+ * half-open recovery lease; reconnecting never marks an unprobed backend
+ * healthy. Health repair is best-effort so a stale/corrupt diagnostics file
+ * cannot undo a successfully stored credential.
+ */
+async function recoverCredentialBackends(
+  store: ModelManagementStore,
+  credentialId: string,
+): Promise<void> {
+  try {
+    const { routing } = await store.read();
+    const health = new FileBackendHealthStore(store.projectRoot);
+    await Promise.all(
+      routing.backends
+        .filter((backend) =>
+          backend.enabled && backend.credentialRef.id === credentialId
+        )
+        .map((backend) => health.reset(backend.id)),
+    );
+  } catch {
+    // The model-health reset endpoint remains available for manual recovery.
+  }
 }
 
 function toGrokApiError(error: unknown): unknown {

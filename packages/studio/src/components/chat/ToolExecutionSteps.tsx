@@ -21,6 +21,7 @@ import {
   NarrativeForecastPreview,
   getNarrativeForecastPreviewDetails,
 } from "./NarrativeForecastPreview";
+import { RoutingTraceDetails } from "./RoutingTraceDetails";
 
 // -- Status rendering helpers --
 
@@ -736,6 +737,11 @@ function PipelineExecution({
           {tr("阶段", "phase")}: {latestSwitch.phase}
         </div>
       )}
+      {exec.routingSummary?.trace ? (
+        <div className="mx-3 mb-2">
+          <RoutingTraceDetails trace={exec.routingSummary.trace} />
+        </div>
+      ) : null}
       <ShortFictionResultPreview exec={exec} />
       <ScriptStoryboardResultPreview exec={exec} onOpenFilmStudio={onOpenFilmStudio} />
       <PlayResultPreview exec={exec} />

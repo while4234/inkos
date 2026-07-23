@@ -1,8 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadStudioTaskSnapshot, saveStudioTaskSnapshot, studioTaskSnapshotPath } from "./task-store.js";
+
+let loadStudioTaskSnapshot: typeof import("./task-store.js").loadStudioTaskSnapshot;
+let saveStudioTaskSnapshot: typeof import("./task-store.js").saveStudioTaskSnapshot;
+let studioTaskSnapshotPath: typeof import("./task-store.js").studioTaskSnapshotPath;
 
 const schedulerStartMock = vi.fn<() => Promise<void>>();
 const initBookMock = vi.fn();
@@ -382,6 +385,14 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     runTranslationProject: actual.runTranslationProject,
     writeTranslationExport: actual.writeTranslationExport,
   };
+});
+
+beforeAll(async () => {
+  ({
+    loadStudioTaskSnapshot,
+    saveStudioTaskSnapshot,
+    studioTaskSnapshotPath,
+  } = await import("./task-store.js"));
 });
 
 const projectConfig = {

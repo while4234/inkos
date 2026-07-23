@@ -3,6 +3,9 @@
   <img src="assets/inkos-text.svg" width="240" height="65" alt="InkOS">
 </p>
 
+> [!NOTE]
+> このリポジトリは、ローカライズと機能拡張を目的とした [Narcooo/inkos](https://github.com/Narcooo/inkos) の独立管理ミラーです。元の著作権および AGPL-3.0-only ライセンスは維持され、上流コードは元リポジトリの `master` にマージされた後にのみ同期します。
+
 <h1 align="center">Story Creation AI Agent<br><sub>長編・短編小説、脚本、インタラクティブ影遊、IP コンテンツ、多言語翻訳のための創作 AI Agent システム</sub></h1>
 
 <p align="center">

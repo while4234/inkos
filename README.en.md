@@ -3,6 +3,9 @@
   <img src="assets/inkos-text.svg" width="240" height="65" alt="InkOS">
 </p>
 
+> [!NOTE]
+> This repository is an independently maintained mirror of [Narcooo/inkos](https://github.com/Narcooo/inkos) for localized changes and feature development. The original copyright and AGPL-3.0-only license remain in effect; upstream code is synchronized only after it has been merged into the original repository's `master` branch.
+
 <h1 align="center">Story Creation AI Agent<br><sub>Creation system for long-form and short fiction, scripts, interactive film/games, IP content, and multilingual translation</sub></h1>
 
 <p align="center">

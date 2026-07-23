@@ -3,6 +3,9 @@
   <img src="assets/inkos-text.svg" width="240" height="65" alt="InkOS">
 </p>
 
+> [!NOTE]
+> 本仓库是 [Narcooo/inkos](https://github.com/Narcooo/inkos) 的独立维护镜像，用于本地化修改和功能扩展。原项目版权与 AGPL-3.0-only 许可证保持不变；上游代码只从原仓库已经合入 `master` 的提交同步。
+
 <h1 align="center">Story Creation AI Agent<br><sub>面向长短篇小说、剧本剧作、互动影游、IP 内容与多语言翻译的创作智能体系统</sub></h1>
 
 <p align="center">

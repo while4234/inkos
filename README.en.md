@@ -245,6 +245,17 @@ never deletes the external Codex CLI file. See
 [MODEL_ROUTING.md](./MODEL_ROUTING.md) for the complete security and transport
 contract.
 
+To connect Grok, explicitly configure `INKOS_GROK_OAUTH_ISSUER`,
+`INKOS_GROK_OAUTH_CLIENT_ID`, and the registered
+`INKOS_GROK_OAUTH_REDIRECT_URI`, then choose **Connect Grok** on the same
+page. InkOS uses OIDC discovery, PKCE, state/nonce, an exact `127.0.0.1`
+callback, and a paste-callback/one-time-code fallback. Missing configuration
+is fail-closed and starts no network request. Multiple accounts and active
+status live in the user credential directory; project routing stores only a
+stable credential ID. Local deletion is not provider-side revocation. See
+[MODEL_ROUTING.md](./MODEL_ROUTING.md) for refresh, bounded 401/403 replay,
+Grok prompt/history conversion, and troubleshooting details.
+
 **Configuration troubleshooting**
 
 ```bash

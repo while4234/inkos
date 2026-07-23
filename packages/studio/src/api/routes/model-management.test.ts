@@ -2,7 +2,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { CodexCredentialStore } from "@actalk/inkos-core";
+import {
+  CodexCredentialStore,
+  GrokCredentialStore,
+  GrokOAuthClient,
+  GrokOAuthLoginManager,
+} from "@actalk/inkos-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../errors.js";
 import { registerModelManagementRoutes } from "./model-management.js";
@@ -43,12 +48,14 @@ function routingFixture() {
 describe("model management API", () => {
   let root: string;
   let codexRoot: string;
+  let grokStore: GrokCredentialStore;
   let app: Hono;
   const probe = vi.fn(async () => ({ ok: true, modelCount: 2 }));
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-model-management-"));
     codexRoot = join(root, "user-credentials");
+    grokStore = new GrokCredentialStore(join(root, "grok-credentials"));
     await writeFile(join(root, "inkos.json"), JSON.stringify({
       name: "model-management",
       version: "0.1.0",
@@ -77,9 +84,43 @@ describe("model management API", () => {
       }
       throw error;
     });
+    const grokConfig = {
+      issuer: "https://auth.grok.test",
+      clientId: "grok-client",
+      redirectUri: "http://127.0.0.1:56121/api/v1/model-auth/grok/callback",
+    };
+    const grokClient = new GrokOAuthClient(grokConfig, {
+      fetch: vi.fn(async (input, init) => {
+        if (input.toString().includes(".well-known")) {
+          return new Response(JSON.stringify({
+            issuer: grokConfig.issuer,
+            authorization_endpoint: `${grokConfig.issuer}/authorize`,
+            token_endpoint: `${grokConfig.issuer}/token`,
+            jwks_uri: `${grokConfig.issuer}/jwks`,
+          }));
+        }
+        const body = new URLSearchParams(String(init?.body));
+        const suffix = body.get("code")?.includes("two") ? "two" : "one";
+        return new Response(JSON.stringify({
+          access_token: `fixture-grok-access-${suffix}`,
+          refresh_token: `fixture-grok-refresh-${suffix}`,
+          id_token: `fixture-grok-id-${suffix}`,
+          token_type: "Bearer",
+          expires_in: 3_600,
+        }));
+      }),
+      verifyIdToken: vi.fn(async (token) => ({
+        subject: token.endsWith("two") ? "subject-two" : "subject-one",
+        email: token.endsWith("two") ? "two@example.test" : "one@example.test",
+      })),
+    });
     registerModelManagementRoutes(app, root, {
       probe,
       codexStore: new CodexCredentialStore(codexRoot),
+      grokStore,
+      grokConfig,
+      grokClient,
+      grokLoginManager: new GrokOAuthLoginManager(grokClient, grokStore),
     });
   });
 
@@ -218,6 +259,142 @@ describe("model management API", () => {
     expect(blocked.status).toBe(409);
     expect(await readFile(join(codexRoot, "auth", "credential-codex.json"), "utf8"))
       .toContain(codexToken("second"));
+  });
+
+  it("fails closed with exact Grok configuration gaps and starts no login", async () => {
+    const missingApp = new Hono();
+    missingApp.onError((error, c) => {
+      if (error instanceof ApiError) {
+        return c.json(
+          { error: { code: error.code, message: error.message } },
+          error.status as 400,
+        );
+      }
+      throw error;
+    });
+    registerModelManagementRoutes(missingApp, root, {
+      probe,
+      codexStore: new CodexCredentialStore(codexRoot),
+      grokStore: new GrokCredentialStore(join(root, "grok-missing-config")),
+      grokConfig: {},
+    });
+    expect(await json(missingApp, "/api/v1/model-auth/grok/config")).toEqual({
+      configured: false,
+      missing: ["issuer", "clientId", "redirectUri"],
+      issuer: null,
+      redirectUri: null,
+    });
+    const response = await missingApp.request(
+      "http://localhost/api/v1/model-auth/grok/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          credentialId: "credential-grok",
+          label: "Grok",
+        }),
+      },
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "GROK_OAUTH_CONFIG_MISSING",
+        message: "Grok OAuth configuration is missing: issuer, clientId, redirectUri.",
+      },
+    });
+  });
+
+  it("connects two Grok accounts, switches active, binds a backend, and exposes no OAuth secret", async () => {
+    const configuration = await json<{
+      configured: boolean;
+      issuer: string;
+      redirectUri: string;
+    }>(app, "/api/v1/model-auth/grok/config");
+    expect(configuration).toEqual({
+      configured: true,
+      missing: [],
+      issuer: "https://auth.grok.test",
+      redirectUri: "http://127.0.0.1:56121/api/v1/model-auth/grok/callback",
+    });
+
+    const first = await connectGrok(app, "credential-grok-one", "Grok One", "one-time-one");
+    const second = await connectGrokCallback(
+      app,
+      "credential-grok-two",
+      "Grok Two",
+      "one-time-two",
+    );
+    expect(first).not.toContain("fixture-grok-access");
+    expect(first).not.toContain("fixture-grok-refresh");
+    expect(first).not.toContain("fixture-grok-id");
+    expect(second).not.toContain("fixture-grok-access");
+
+    const accounts = await json<{
+      accounts: Array<{ id: string; active: boolean; accountHint: string }>;
+    }>(app, "/api/v1/model-auth/grok/accounts");
+    expect(accounts.accounts).toEqual([
+      expect.objectContaining({
+        id: "credential-grok-one",
+        active: false,
+        accountHint: "on••@example.test",
+      }),
+      expect.objectContaining({
+        id: "credential-grok-two",
+        active: true,
+        accountHint: "tw••@example.test",
+      }),
+    ]);
+    const safeAccounts = JSON.stringify(accounts);
+    expect(safeAccounts).not.toContain("Authorization");
+    expect(safeAccounts).not.toContain("token");
+
+    const active = await app.request(
+      "http://localhost/api/v1/model-auth/grok/credential-grok-one/active",
+      { method: "POST" },
+    );
+    expect(active.status).toBe(200);
+    expect((await active.json()).credential).toMatchObject({
+      id: "credential-grok-one",
+      active: true,
+    });
+
+    const backendState = await json<{ revision: string }>(app, "/api/v1/model-backends");
+    const backend = await app.request("http://localhost/api/v1/model-backends", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: backendState.revision,
+        existingCredential: true,
+        backend: {
+          id: "backend-grok",
+          displayName: "Grok OAuth",
+          service: "xai",
+          provider: "openai",
+          baseUrl: "https://api.x.ai/v1",
+          credentialRef: {
+            id: "credential-grok-one",
+            kind: "grok_oauth",
+          },
+          enabled: true,
+          transport: { apiFormat: "chat", stream: true },
+        },
+      }),
+    });
+    expect(backend.status).toBe(201);
+    expect(await backend.text()).not.toContain("fixture-grok");
+
+    const blocked = await app.request(
+      "http://localhost/api/v1/model-auth/grok/credential-grok-one",
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision: (await json<{ revision: string }>(app, "/api/v1/model-backends")).revision,
+        }),
+      },
+    );
+    expect(blocked.status).toBe(409);
+    expect(await grokStore.getStatus("credential-grok-one")).toBeDefined();
   });
 
   it("creates a second backend and an ordered two-candidate route with CAS protection", async () => {
@@ -397,6 +574,81 @@ describe("model management API", () => {
     expect((await app.request("http://localhost/api/v1/model-health/backend-a/reset", { method: "POST" })).status).toBe(200);
   });
 });
+
+async function connectGrok(
+  app: Hono,
+  credentialId: string,
+  label: string,
+  code: string,
+): Promise<string> {
+  const initial = await json<{ revision: string }>(app, "/api/v1/model-backends");
+  const started = await app.request("http://localhost/api/v1/model-auth/grok/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      revision: initial.revision,
+      credentialId,
+      label,
+    }),
+  });
+  expect(started.status).toBe(201);
+  const start = await started.json() as {
+    readonly sessionId: string;
+    readonly authorizationUrl: string;
+  };
+  expect(new URL(start.authorizationUrl).searchParams.get("code_challenge_method"))
+    .toBe("S256");
+  const completed = await app.request(
+    `http://localhost/api/v1/model-auth/grok/login/${encodeURIComponent(start.sessionId)}/complete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback: code }),
+    },
+  );
+  expect(completed.status).toBe(200);
+  return completed.text();
+}
+
+async function connectGrokCallback(
+  app: Hono,
+  credentialId: string,
+  label: string,
+  code: string,
+): Promise<string> {
+  const initial = await json<{ revision: string }>(app, "/api/v1/model-backends");
+  const started = await app.request("http://localhost/api/v1/model-auth/grok/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      revision: initial.revision,
+      credentialId,
+      label,
+    }),
+  });
+  expect(started.status).toBe(201);
+  const start = await started.json() as {
+    readonly authorizationUrl: string;
+    readonly sessionId: string;
+  };
+  const state = new URL(start.authorizationUrl).searchParams.get("state");
+  const callback = await app.request(
+    `http://127.0.0.1:56121/api/v1/model-auth/grok/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state ?? "")}`,
+  );
+  expect(callback.status).toBe(200);
+  const terminal = await app.request(
+    `http://localhost/api/v1/model-auth/grok/login/${encodeURIComponent(start.sessionId)}`,
+  );
+  expect(await terminal.json()).toEqual({ status: "completed" });
+  const consumed = await app.request(
+    `http://localhost/api/v1/model-auth/grok/login/${encodeURIComponent(start.sessionId)}`,
+  );
+  expect(await consumed.json()).toEqual({
+    status: "missing",
+    message: "Start the Grok connection again.",
+  });
+  return callback.text();
+}
 
 async function json<T>(app: Hono, path: string): Promise<T> {
   const response = await app.request(`http://localhost${path}`);

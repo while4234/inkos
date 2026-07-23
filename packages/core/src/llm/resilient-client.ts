@@ -395,6 +395,9 @@ export class ResilientChatRuntime {
       ...(credential.kind === "codex"
         ? { _codexCredential: credential }
         : {}),
+      ...(credential.kind === "grok_oauth"
+        ? { _grokCredential: credential }
+        : {}),
     };
   }
 

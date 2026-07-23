@@ -266,12 +266,20 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     async delete() { return false; }
   }
 
+  class MockGrokCredentialStore {
+    async list() { return []; }
+    async getStatus() { return undefined; }
+  }
+
   return {
     StateManager: MockStateManager,
     PipelineRunner: MockPipelineRunner,
     Scheduler: MockScheduler,
     CodexCredentialStore: MockCodexCredentialStore,
+    GrokCredentialStore: MockGrokCredentialStore,
     CodexCredentialError: actual.CodexCredentialError,
+    grokOAuthConfigFromEnv: vi.fn(() => ({})),
+    grokOAuthConfigurationStatus: actual.grokOAuthConfigurationStatus,
     discoverCodexAuthCandidates: vi.fn(async () => []),
     importDiscoveredCodexAuth: vi.fn(async () => {
       throw new Error("not implemented");

@@ -52,6 +52,11 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     async getStatus() { return undefined; }
   }
 
+  class MockGrokCredentialStore {
+    async list() { return []; }
+    async getStatus() { return undefined; }
+  }
+
   // Real isNewLayoutBook — needs filesystem access
   async function isNewLayoutBook(bookDir: string): Promise<boolean> {
     const { access: accessFs } = await import("node:fs/promises");
@@ -69,7 +74,10 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     PipelineRunner: MockPipelineRunner,
     Scheduler: MockScheduler,
     CodexCredentialStore: MockCodexCredentialStore,
+    GrokCredentialStore: MockGrokCredentialStore,
     CodexCredentialError: actual.CodexCredentialError,
+    grokOAuthConfigFromEnv: vi.fn(() => ({})),
+    grokOAuthConfigurationStatus: actual.grokOAuthConfigurationStatus,
     discoverCodexAuthCandidates: vi.fn(async () => []),
     importDiscoveredCodexAuth: vi.fn(async () => {
       throw new Error("not implemented");

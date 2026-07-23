@@ -2,6 +2,7 @@ import type {
   BackendHealthFile,
   BackendInstance,
   CodexCredentialStatus,
+  GrokCredentialStatus,
   CredentialMetadata,
   LogicalModelRoute,
   ModelRoutingConfig,
@@ -26,6 +27,7 @@ export function credentialStatusDTO(
   credential: CredentialMetadata,
   secrets: SecretsFile,
   codexStatus?: CodexCredentialStatus,
+  grokStatus?: GrokCredentialStatus,
 ): CredentialStatusDTO {
   const apiKey = credential.kind === "api_key"
     ? secrets.credentials?.[credential.id]?.apiKey
@@ -35,13 +37,15 @@ export function credentialStatusDTO(
     kind: credential.kind,
     label: credential.label,
     scope: credential.scope,
-    configured: Boolean(apiKey || codexStatus),
-    maskedHint: apiKey ? maskCredential(apiKey) : codexStatus?.accountHint ?? null,
+    configured: Boolean(apiKey || codexStatus || grokStatus),
+    maskedHint: apiKey
+      ? maskCredential(apiKey)
+      : codexStatus?.accountHint ?? grokStatus?.accountHint ?? null,
     source: apiKey
       ? "project_secret"
       : credential.kind === "api_key"
         ? "not_configured"
-        : codexStatus ? "user_credential" : "not_configured",
+        : codexStatus || grokStatus ? "user_credential" : "not_configured",
     ...(codexStatus
       ? {
           codex: {
@@ -55,6 +59,19 @@ export function credentialStatusDTO(
           },
         }
       : {}),
+    ...(grokStatus
+      ? {
+          grok: {
+            issuer: grokStatus.issuer,
+            accountHint: grokStatus.accountHint,
+            expiresAt: grokStatus.expiresAt,
+            nearExpiry: grokStatus.nearExpiry,
+            active: grokStatus.active,
+            authRequired: grokStatus.authRequired,
+            lastRefresh: grokStatus.lastRefresh,
+          },
+        }
+      : {}),
   };
 }
 
@@ -63,6 +80,7 @@ export function backendInstanceDTO(
   credential: CredentialMetadata,
   secrets: SecretsFile,
   codexStatus?: CodexCredentialStatus,
+  grokStatus?: GrokCredentialStatus,
 ): BackendInstanceDTO {
   return {
     id: backend.id,
@@ -70,7 +88,7 @@ export function backendInstanceDTO(
     service: backend.service,
     provider: backend.provider,
     baseUrl: backend.baseUrl,
-    credential: credentialStatusDTO(credential, secrets, codexStatus),
+    credential: credentialStatusDTO(credential, secrets, codexStatus, grokStatus),
     enabled: backend.enabled,
     transport: backend.transport,
   };

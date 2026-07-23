@@ -58,6 +58,49 @@ describe("BackendPool", () => {
       entry.backendId === "backend-ready" && entry.reason === "already_attempted"
     ))).toBe(true);
   });
+
+  it("marks a backend auth_required when credential refresh requires reconnection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-backend-pool-auth-"));
+    roots.push(root);
+    const health = new FileBackendHealthStore(root);
+    const credentials = new CredentialResolver([{
+      kind: "grok_oauth" as const,
+      resolve: async () => {
+        throw Object.assign(new Error("fixture refresh rejected"), {
+          authRequired: true as const,
+        });
+      },
+    }]);
+    const routing: ModelRoutingConfig = {
+      version: 1,
+      credentials: [
+        { id: "credential-grok", kind: "grok_oauth", label: "Grok", scope: "user" },
+      ],
+      backends: [{
+        ...backend("backend-grok", "credential-grok"),
+        credentialRef: { id: "credential-grok", kind: "grok_oauth" },
+      }],
+      routes: [{
+        id: "route-main",
+        displayName: "Main",
+        promptFamily: "grok",
+        enabled: true,
+        candidates: [{ backendId: "backend-grok", upstreamModelId: "grok-4" }],
+      }],
+      defaultRouteId: "route-main",
+    };
+    const pool = new BackendPool(routing, credentials, health);
+
+    const resolution = await pool.resolve("route-main");
+
+    expect(resolution.skipped).toEqual([{
+      backendId: "backend-grok",
+      upstreamModelId: "grok-4",
+      reason: "credential_unavailable",
+    }]);
+    expect((await health.read()).backends["backend-grok"]?.status)
+      .toBe("auth_required");
+  });
 });
 
 function createRouting(): ModelRoutingConfig {

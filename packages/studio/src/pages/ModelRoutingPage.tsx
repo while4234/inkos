@@ -7,6 +7,8 @@ import type {
   BackendInstanceDTO,
   CodexDiscoveryCandidateDTO,
   CredentialStatusDTO,
+  GrokOAuthConfigurationStatusDTO,
+  GrokOAuthLoginStartDTO,
   LogicalModelRouteDTO,
   RoutingActivityEventDTO,
   StudioPromptFamily,
@@ -27,6 +29,7 @@ interface RoutingView {
   readonly activity: ReadonlyArray<RoutingActivityEventDTO>;
   readonly overrides: Readonly<Record<string, unknown>>;
   readonly codexCandidates: ReadonlyArray<CodexDiscoveryCandidateDTO>;
+  readonly grokConfig: GrokOAuthConfigurationStatusDTO;
 }
 
 const fieldClass = "w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm";
@@ -52,17 +55,25 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
   const [codexBackendId, setCodexBackendId] = useState("backend-codex");
   const [codexBackendName, setCodexBackendName] = useState("Codex");
   const [codexCredentialForBackend, setCodexCredentialForBackend] = useState("");
+  const [grokCredentialId, setGrokCredentialId] = useState("credential-grok");
+  const [grokLabel, setGrokLabel] = useState("Grok");
+  const [grokBackendId, setGrokBackendId] = useState("backend-grok");
+  const [grokBackendName, setGrokBackendName] = useState("Grok OAuth");
+  const [grokCredentialForBackend, setGrokCredentialForBackend] = useState("");
+  const [grokLogin, setGrokLogin] = useState<GrokOAuthLoginStartDTO | null>(null);
+  const [grokCallback, setGrokCallback] = useState("");
 
   const reload = useCallback(async () => {
     setError("");
     try {
-      const [backendPayload, authPayload, routePayload, healthPayload, overridePayload, discoveryPayload] = await Promise.all([
+      const [backendPayload, authPayload, routePayload, healthPayload, overridePayload, discoveryPayload, grokConfig] = await Promise.all([
         fetchJson<{ revision: string; backends: BackendInstanceDTO[] }>("/model-backends"),
         fetchJson<{ credentials: CredentialStatusDTO[] }>("/model-auth"),
         fetchJson<{ revision: string; routes: LogicalModelRouteDTO[] }>("/model-routes"),
         fetchJson<{ backends: BackendHealthDTO[]; recentActivity: RoutingActivityEventDTO[] }>("/model-health"),
         fetchJson<{ overrides: Record<string, unknown> }>("/project/model-overrides"),
         fetchJson<{ candidates: CodexDiscoveryCandidateDTO[] }>("/model-auth/codex/discovery"),
+        fetchJson<GrokOAuthConfigurationStatusDTO>("/model-auth/grok/config"),
       ]);
       setView({
         revision: routePayload.revision,
@@ -73,6 +84,7 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
         activity: healthPayload.recentActivity,
         overrides: overridePayload.overrides,
         codexCandidates: discoveryPayload.candidates,
+        grokConfig,
       });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : tr("读取模型路由失败", "Failed to load model routing"));
@@ -80,6 +92,50 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
   }, []);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  useEffect(() => {
+    if (!grokLogin) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const result = await fetchJson<{
+          readonly status: "pending" | "missing" | "expired" | "completed" | "failed";
+          readonly message?: string;
+        }>(
+          `/model-auth/grok/login/${encodeURIComponent(grokLogin.sessionId)}`,
+          { signal: controller.signal },
+        );
+        if (result.status === "completed") {
+          setGrokCallback("");
+          setGrokLogin(null);
+          await reload();
+          return;
+        }
+        if (result.status !== "pending") {
+          setGrokCallback("");
+          setGrokLogin(null);
+          setError(result.message ?? tr(
+            "Grok 连接未完成，请重新发起连接。",
+            "The Grok connection did not complete; start it again.",
+          ));
+          return;
+        }
+      } catch (reason) {
+        if (controller.signal.aborted) return;
+        setError(reason instanceof Error ? reason.message : tr(
+          "检查 Grok 登录状态失败",
+          "Failed to check Grok login status",
+        ));
+      }
+      timer = setTimeout(() => void poll(), 1_000);
+    };
+    timer = setTimeout(() => void poll(), 750);
+    return () => {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [grokLogin, reload]);
 
   const run = async (name: string, operation: () => Promise<void>) => {
     setBusy(name);
@@ -215,6 +271,62 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
       });
     });
 
+  const startGrokLogin = (
+    credentialId = grokCredentialId.trim(),
+    label = grokLabel.trim(),
+  ) => run("start-grok", async () => {
+    const login = await fetchJson<GrokOAuthLoginStartDTO>("/model-auth/grok/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: view.revision,
+        credentialId,
+        label,
+      }),
+    });
+    window.open(login.authorizationUrl, "_blank", "noopener,noreferrer");
+    setGrokLogin({ ...login, authorizationUrl: "" });
+    setGrokCallback("");
+  });
+
+  const completeGrokLogin = () => {
+    if (!grokLogin) return Promise.resolve();
+    return run("complete-grok", async () => {
+      await fetchJson(`/model-auth/grok/login/${encodeURIComponent(grokLogin.sessionId)}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callback: grokCallback }),
+      });
+      setGrokCallback("");
+      setGrokLogin(null);
+    });
+  };
+
+  const createGrokBackend = () =>
+    run("create-grok-backend", async () => {
+      await fetchJson("/model-backends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision: view.revision,
+          existingCredential: true,
+          backend: {
+            id: grokBackendId.trim(),
+            displayName: grokBackendName.trim(),
+            service: "xai",
+            provider: "openai",
+            baseUrl: "https://api.x.ai/v1",
+            credentialRef: {
+              id: grokCredentialForBackend,
+              kind: "grok_oauth",
+            },
+            enabled: true,
+            transport: { apiFormat: "chat", stream: true },
+          },
+        }),
+      });
+    });
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -317,6 +429,130 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
       </section>
 
       <section className="space-y-3 rounded-xl border border-border/50 p-4">
+        <h2 className="flex items-center gap-2 font-medium"><KeyRound size={16} />{tr("连接 Grok", "Connect Grok")}</h2>
+        <p className="text-sm text-muted-foreground">
+          {tr(
+            "通过配置的 OIDC issuer、PKCE 和本机回调连接多个 Grok 账号。Token 仅保存在 InkOS 用户级凭证目录，浏览器只接收安全状态。",
+            "Connect multiple Grok accounts through the configured OIDC issuer, PKCE, and loopback callback. Tokens stay in the InkOS user credential directory; the browser receives safe status only.",
+          )}
+        </p>
+        {!view.grokConfig.configured && (
+          <div role="status" className="rounded border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
+            {tr("尚不能连接；缺少配置：", "Connection unavailable; missing configuration: ")}
+            {view.grokConfig.missing.join(", ")}
+          </div>
+        )}
+        {view.grokConfig.configured && (
+          <div className="text-xs text-muted-foreground">
+            issuer: {view.grokConfig.issuer} · redirect: {view.grokConfig.redirectUri}
+          </div>
+        )}
+        <div className="grid gap-2 md:grid-cols-3">
+          <label className="text-xs">{tr("凭证 ID", "Credential ID")}<input aria-label="Grok credential ID" value={grokCredentialId} onChange={(event) => setGrokCredentialId(event.target.value)} className={fieldClass} /></label>
+          <label className="text-xs">{tr("显示名称", "Display name")}<input aria-label="Grok credential label" value={grokLabel} onChange={(event) => setGrokLabel(event.target.value)} className={fieldClass} /></label>
+          <button
+            disabled={!view.grokConfig.configured || !grokCredentialId.trim() || !grokLabel.trim()}
+            onClick={() => void startGrokLogin()}
+            className="self-end rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+          >{tr("打开 Grok 登录", "Open Grok login")}</button>
+        </div>
+        {grokLogin && (
+          <div className="space-y-2 rounded border border-border/40 p-3">
+            <div role="status" className="text-xs">
+              {tr(
+                `正在等待本机 ${grokLogin.callback.host}:${grokLogin.callback.port}${grokLogin.callback.path} 回调。若浏览器未自动返回，请粘贴完整 callback URL 或一次性 code。`,
+                `Waiting for the loopback callback at ${grokLogin.callback.host}:${grokLogin.callback.port}${grokLogin.callback.path}. If the browser does not return automatically, paste the full callback URL or one-time code.`,
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                aria-label="Grok callback URL or code"
+                type="password"
+                autoComplete="off"
+                value={grokCallback}
+                onChange={(event) => setGrokCallback(event.target.value)}
+                className={`${fieldClass} min-w-64 flex-1`}
+              />
+              <button
+                disabled={!grokCallback.trim()}
+                onClick={() => void completeGrokLogin()}
+                className="rounded border px-3 py-2 text-xs disabled:opacity-50"
+              >{tr("完成连接", "Complete connection")}</button>
+              <button
+                onClick={() => {
+                  void fetchJson(`/model-auth/grok/login/${encodeURIComponent(grokLogin.sessionId)}`, {
+                    method: "DELETE",
+                  }).finally(() => {
+                    setGrokCallback("");
+                    setGrokLogin(null);
+                  });
+                }}
+                className="rounded border px-3 py-2 text-xs"
+              >{tr("取消", "Cancel")}</button>
+            </div>
+          </div>
+        )}
+        <div className="space-y-2">
+          {view.credentials.filter((credential) => credential.kind === "grok_oauth").map((credential) => (
+            <div key={credential.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/40 p-2 text-xs">
+              <span>
+                {credential.label} · {credential.grok?.accountHint ?? tr("账号未知", "Account unknown")} ·
+                {" "}{credential.grok?.expiresAt ?? tr("过期时间未知", "Expiry unknown")} ·
+                {" "}{credential.grok?.active ? tr("当前账号", "Active") : tr("非当前账号", "Inactive")} ·
+                {" "}{credential.grok?.authRequired ? tr("需要重新连接", "Reauthorization required") : `refresh: ${credential.grok?.lastRefresh ?? "never"}`}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {!credential.grok?.active && (
+                  <button
+                    onClick={() => void run(`active-grok-${credential.id}`, () =>
+                      fetchJson(`/model-auth/grok/${encodeURIComponent(credential.id)}/active`, {
+                        method: "POST",
+                      }).then(() => undefined))}
+                    className="rounded border px-2 py-1"
+                  >{tr("设为当前", "Set active")}</button>
+                )}
+                <button
+                  disabled={!view.grokConfig.configured}
+                  onClick={() => void startGrokLogin(credential.id, credential.label)}
+                  className="rounded border px-2 py-1 disabled:opacity-50"
+                >{tr("重新连接", "Reconnect")}</button>
+                <button
+                  onClick={() => {
+                    if (!window.confirm(tr(
+                      `删除 Grok 凭证 ${credential.label}？撤销 provider 授权需另行在账号端完成。`,
+                      `Delete Grok credential ${credential.label}? Provider-side revocation must be completed separately.`,
+                    ))) return;
+                    void run(`delete-grok-${credential.id}`, () =>
+                      fetchJson(`/model-auth/grok/${encodeURIComponent(credential.id)}`, {
+                        method: "DELETE",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ revision: view.revision }),
+                      }).then(() => undefined));
+                  }}
+                  className="rounded border border-destructive/40 px-2 py-1 text-destructive"
+                >{tr("删除", "Delete")}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-2 md:grid-cols-3">
+          <input aria-label="Grok backend ID" value={grokBackendId} onChange={(event) => setGrokBackendId(event.target.value)} className={fieldClass} />
+          <input aria-label="Grok backend name" value={grokBackendName} onChange={(event) => setGrokBackendName(event.target.value)} className={fieldClass} />
+          <select aria-label="Grok backend credential" value={grokCredentialForBackend} onChange={(event) => setGrokCredentialForBackend(event.target.value)} className={fieldClass}>
+            <option value="">{tr("选择 Grok 凭证", "Select Grok credential")}</option>
+            {view.credentials.filter((credential) => credential.kind === "grok_oauth" && credential.configured).map((credential) => (
+              <option key={credential.id} value={credential.id}>{credential.label}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          disabled={!grokBackendId.trim() || !grokBackendName.trim() || !grokCredentialForBackend}
+          onClick={() => void createGrokBackend()}
+          className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+        >{tr("创建 Grok OAuth 后端", "Create Grok OAuth backend")}</button>
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-border/50 p-4">
         <h2 className="flex items-center gap-2 font-medium"><Plus size={16} />{tr("新增 API Key 后端", "Add API Key backend")}</h2>
         <div className="grid gap-2 md:grid-cols-4">
           <label className="text-xs">{tr("稳定 ID", "Stable ID")}<input aria-label="Backend ID" value={backendId} onChange={(e) => setBackendId(e.target.value)} className={fieldClass} /></label>
@@ -342,6 +578,8 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
                   <div className="text-xs text-muted-foreground">
                     {backend.credential.kind === "codex"
                       ? `${backend.credential.codex?.accountHint ?? tr("账号未知", "Account unknown")} · ${backend.credential.codex?.expiresAt ?? tr("过期时间未知", "Expiry unknown")}`
+                      : backend.credential.kind === "grok_oauth"
+                        ? `${backend.credential.grok?.accountHint ?? tr("账号未知", "Account unknown")} · ${backend.credential.grok?.expiresAt ?? tr("过期时间未知", "Expiry unknown")}`
                       : backend.credential.configured
                         ? backend.credential.maskedHint
                         : tr("未配置凭证", "Credential not configured")}

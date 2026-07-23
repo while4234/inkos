@@ -97,7 +97,15 @@ export class BackendPool {
           { signal },
         );
         candidates.push({ backend: backend!, candidate, credential });
-      } catch {
+      } catch (error) {
+        if (isAuthRequiredCredentialError(error)) {
+          await this.healthStore.recordFailure({
+            backendId: candidate.backendId,
+            status: "auth_required",
+            reason: "credential_refresh_failed",
+            at: this.now(),
+          });
+        }
         skipped.push({
           backendId: candidate.backendId,
           upstreamModelId: candidate.upstreamModelId,
@@ -123,7 +131,11 @@ export class BackendPool {
     if (!isBackendAvailable(health.backends[backend.id], this.now())) {
       return "health_unavailable";
     }
-    if (backend.credentialRef.kind !== "api_key" && backend.credentialRef.kind !== "codex") {
+    if (
+      backend.credentialRef.kind !== "api_key"
+      && backend.credentialRef.kind !== "codex"
+      && backend.credentialRef.kind !== "grok_oauth"
+    ) {
       return "unsupported_credential_kind";
     }
     if (!await this.supportsModel(backend, candidate.upstreamModelId)) {
@@ -131,4 +143,15 @@ export class BackendPool {
     }
     return undefined;
   }
+}
+
+function isAuthRequiredCredentialError(
+  error: unknown,
+): error is { readonly authRequired: true } {
+  return Boolean(
+    error
+    && typeof error === "object"
+    && "authRequired" in error
+    && (error as { readonly authRequired?: unknown }).authRequired === true,
+  );
 }

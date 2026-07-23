@@ -156,6 +156,7 @@ export interface CredentialStatusDTO {
   readonly maskedHint: string | null;
   readonly source: "project_secret" | "user_credential" | "not_configured";
   readonly codex?: CodexCredentialStatusDTO;
+  readonly grok?: GrokCredentialStatusDTO;
 }
 
 export interface CodexCredentialStatusDTO {
@@ -179,6 +180,35 @@ export interface CodexDiscoveryCandidateDTO {
   readonly expiresAt: string | null;
   readonly nearExpiry: boolean;
   readonly message: string;
+}
+
+export interface GrokCredentialStatusDTO {
+  readonly issuer: string;
+  readonly accountHint: string | null;
+  readonly expiresAt: string;
+  readonly nearExpiry: boolean;
+  readonly active: boolean;
+  readonly authRequired: boolean;
+  readonly lastRefresh: "never" | "succeeded" | "failed";
+}
+
+export interface GrokOAuthConfigurationStatusDTO {
+  readonly configured: boolean;
+  readonly missing: ReadonlyArray<"issuer" | "clientId" | "redirectUri">;
+  readonly issuer: string | null;
+  readonly redirectUri: string | null;
+}
+
+export interface GrokOAuthLoginStartDTO {
+  readonly sessionId: string;
+  readonly authorizationUrl: string;
+  readonly expiresAt: string;
+  readonly callback: {
+    readonly scheme: "http";
+    readonly host: "127.0.0.1";
+    readonly port: number;
+    readonly path: string;
+  };
 }
 
 export interface BackendInstanceDTO {

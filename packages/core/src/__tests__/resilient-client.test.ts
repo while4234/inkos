@@ -8,6 +8,7 @@ import { FileBackendHealthStore } from "../llm/backend-health-store.js";
 import {
   CredentialResolver,
   type ResolvedCodexCredential,
+  type ResolvedGrokOAuthCredential,
 } from "../llm/credentials/index.js";
 import type { ModelRoutingConfig } from "../llm/model-routing.js";
 import type { PromptFamily } from "../llm/model-routing.js";
@@ -555,6 +556,144 @@ describe("ResilientChatRuntime", () => {
       expect.objectContaining({
         type: "backend_switched",
         fromBackendId: "backend-codex",
+        toBackendId: "backend-api",
+        reason: "auth",
+      }),
+    ]));
+  });
+
+  it("routes Grok OAuth through one prompt injection, one auth refresh, and structured failover", async () => {
+    let grokRequests = 0;
+    const grokBackend = await createMockBackend((request, response) => {
+      grokRequests += 1;
+      expect(request.headers.authorization).toBe(
+        grokRequests === 1 ? "Bearer grok-before" : "Bearer grok-after",
+      );
+      sendJson(response, grokRequests === 1 ? 401 : 403, {
+        error: { code: "invalid_token", message: "fixture auth failure" },
+      });
+    });
+    const backup = await createMockBackend((_request, response) =>
+      sendCompletion(response, "backup", 2));
+    const projectRoot = await mkdtemp(join(tmpdir(), "inkos-grok-route-"));
+    cleanups.push(() => rm(projectRoot, { recursive: true, force: true }));
+    let refreshes = 0;
+    const refreshed: ResolvedGrokOAuthCredential = {
+      kind: "grok_oauth",
+      accessToken: "grok-after",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      refresh: async () => {
+        refreshes += 1;
+        return refreshed;
+      },
+      markAuthRequired: async () => undefined,
+    };
+    const credentials = new CredentialResolver([
+      {
+        kind: "grok_oauth",
+        resolve: async () => ({
+          kind: "grok_oauth",
+          accessToken: "grok-before",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          refresh: async () => {
+            refreshes += 1;
+            return refreshed;
+          },
+          markAuthRequired: async () => undefined,
+        }),
+      },
+      {
+        kind: "api_key",
+        resolve: async () => ({ kind: "api_key", apiKey: "backup-key" }),
+      },
+    ]);
+    const routing: ModelRoutingConfig = {
+      version: 1,
+      credentials: [
+        { id: "credential-grok", kind: "grok_oauth", label: "Grok", scope: "user" },
+        { id: "credential-api", kind: "api_key", label: "Backup", scope: "project" },
+      ],
+      backends: [
+        {
+          id: "backend-grok",
+          displayName: "Grok",
+          service: "xai",
+          provider: "openai",
+          baseUrl: grokBackend.baseUrl,
+          credentialRef: { id: "credential-grok", kind: "grok_oauth" },
+          enabled: true,
+          transport: { apiFormat: "chat", stream: true },
+        },
+        {
+          id: "backend-api",
+          displayName: "Backup",
+          service: "custom",
+          provider: "custom",
+          baseUrl: backup.baseUrl,
+          credentialRef: { id: "credential-api", kind: "api_key" },
+          enabled: true,
+          transport: { apiFormat: "chat", stream: false },
+        },
+      ],
+      routes: [{
+        id: "route-main",
+        displayName: "Grok writing",
+        promptFamily: "grok",
+        enabled: true,
+        candidates: [
+          { backendId: "backend-grok", upstreamModelId: "grok-4" },
+          { backendId: "backend-api", upstreamModelId: "backup-model" },
+        ],
+      }],
+      defaultRouteId: "route-main",
+    };
+    const events: RoutingEvent[] = [];
+    const runtime = new ResilientChatRuntime({
+      routing,
+      projectRoot,
+      credentials,
+      baseConfig: LLMConfigSchema.parse({
+        provider: "custom",
+        service: "custom",
+        baseUrl: backup.baseUrl,
+        apiKey: "",
+        model: "legacy",
+        routing,
+      }),
+      observer: (event) => {
+        events.push(event);
+      },
+    });
+
+    const result = await runtime.complete(
+      "route-main",
+      [
+        { role: "assistant", content: "ordinary assistant text" },
+        { role: "user", content: "same business request" },
+      ],
+    );
+
+    expect(result.content).toBe("backup");
+    expect(grokRequests).toBe(2);
+    expect(refreshes).toBe(1);
+    expect(grokBackend.requests).toHaveLength(2);
+    const grokMessages = grokBackend.requests[0]?.body.messages as Array<{
+      readonly role: string;
+      readonly content: string;
+    }>;
+    expect(countModelGlobalPromptMarkers(
+      grokMessages.map((message) => message.content).join("\n"),
+    )).toBe(1);
+    expect(grokMessages).toEqual(expect.arrayContaining([
+      { role: "assistant", content: "ordinary assistant text" },
+      { role: "user", content: "same business request" },
+    ]));
+    expect((await runtime.healthStore.read()).backends["backend-grok"]?.status)
+      .toBe("auth_required");
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "backend_switched",
+        fromBackendId: "backend-grok",
         toBackendId: "backend-api",
         reason: "auth",
       }),

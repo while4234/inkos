@@ -564,6 +564,25 @@ export {
   type CodexCredentialStatus,
   type CodexTokenRefreshResult,
   type CodexTokenRefresher,
+  GrokOAuthClient,
+  GrokOAuthLoginManager,
+  GrokCredentialStore,
+  GrokOAuthCredentialProvider,
+  GrokOAuthError,
+  grokOAuthConfigFromEnv,
+  grokOAuthConfigurationStatus,
+  defaultGrokCredentialRoot,
+  startGrokLoopbackCallback,
+  GROK_REFRESH_SKEW_MS,
+  GROK_LOGIN_SESSION_TTL_MS,
+  type GrokOAuthConfig,
+  type GrokOAuthConfigurationStatus,
+  type GrokOidcDiscovery,
+  type GrokOAuthTokenSet,
+  type GrokAccountIdentity,
+  type GrokCredentialStatus,
+  type ResolvedGrokOAuthCredential,
+  type GrokOAuthLoginStart,
 } from "./llm/credentials/index.js";
 export {
   requestCodexResponses,
@@ -575,6 +594,15 @@ export {
   type CodexResponsesResult,
   type CodexResponsesTransportInput,
 } from "./llm/codex-responses-transport.js";
+export {
+  requestGrokChatCompletion,
+  normalizeGrokChatUrl,
+  buildGrokChatPayload,
+  GROK_DEFAULT_BASE_URL,
+  type GrokChatMessage,
+  type GrokChatTransportInput,
+  type GrokChatResult,
+} from "./llm/grok-chat-transport.js";
 export { writeJsonAtomically } from "./llm/atomic-json.js";
 export {
   BACKEND_HEALTH_SCHEMA_VERSION,

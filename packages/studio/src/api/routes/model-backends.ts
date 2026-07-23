@@ -1,6 +1,7 @@
 import {
   BackendInstanceSchema,
   CodexCredentialStore,
+  GrokCredentialStore,
   CredentialMetadataSchema,
 } from "@actalk/inkos-core";
 import type { Hono } from "hono";
@@ -19,14 +20,17 @@ export function registerModelBackendRoutes(
   app: Hono,
   store: ModelManagementStore,
   codexStore: CodexCredentialStore,
+  grokStore: GrokCredentialStore,
 ): void {
   app.get("/api/v1/model-backends", async (c) => {
-    const [{ routing, revision }, secrets, codexStatuses] = await Promise.all([
+    const [{ routing, revision }, secrets, codexStatuses, grokStatuses] = await Promise.all([
       store.read(),
       store.readSecrets(),
       codexStore.list(),
+      grokStore.list(),
     ]);
     const codexById = new Map(codexStatuses.map((status) => [status.id, status]));
+    const grokById = new Map(grokStatuses.map((status) => [status.id, status]));
     return c.json({
       revision,
       backends: routing.backends.map((backend) => {
@@ -37,6 +41,7 @@ export function registerModelBackendRoutes(
           credential,
           secrets,
           codexById.get(credential.id),
+          grokById.get(credential.id),
         );
       }),
     }, 200, { ETag: `"${revision}"` });
@@ -49,19 +54,27 @@ export function registerModelBackendRoutes(
         revision: optionalString(raw.revision, "revision"),
         backend: parseCoreSchema(BackendInstanceSchema, raw.backend),
       };
-      if (body.backend.credentialRef.kind !== "codex") {
+      if (
+        body.backend.credentialRef.kind !== "codex"
+        && body.backend.credentialRef.kind !== "grok_oauth"
+      ) {
         throw new ApiError(
           400,
           "MODEL_CREDENTIAL_KIND_UNSUPPORTED",
-          "Only an imported Codex login credential can use existingCredential.",
+          "Only a connected Codex or Grok login credential can use existingCredential.",
         );
       }
-      const codexStatus = await codexStore.getStatus(body.backend.credentialRef.id);
-      if (!codexStatus) {
+      const codexStatus = body.backend.credentialRef.kind === "codex"
+        ? await codexStore.getStatus(body.backend.credentialRef.id)
+        : undefined;
+      const grokStatus = body.backend.credentialRef.kind === "grok_oauth"
+        ? await grokStore.getStatus(body.backend.credentialRef.id)
+        : undefined;
+      if (!codexStatus && !grokStatus) {
         throw new ApiError(
           404,
           "MODEL_CREDENTIAL_NOT_FOUND",
-          `Codex credential "${body.backend.credentialRef.id}" is not imported.`,
+          `Login credential "${body.backend.credentialRef.id}" is not connected.`,
         );
       }
       const updated = await store.createBackendWithExistingCredential(
@@ -78,6 +91,7 @@ export function registerModelBackendRoutes(
           credential,
           await store.readSecrets(),
           codexStatus,
+          grokStatus,
         ),
       }, 201);
     }

@@ -5,6 +5,11 @@ import {
   CodexCredentialStore,
   type ResolvedCodexCredential,
 } from "./codex-auth.js";
+import {
+  GrokCredentialStore,
+  GrokOAuthCredentialProvider,
+  type ResolvedGrokOAuthCredential,
+} from "./grok-oauth.js";
 
 export interface ResolvedApiKeyCredential {
   readonly kind: "api_key";
@@ -13,7 +18,8 @@ export interface ResolvedApiKeyCredential {
 
 export type ResolvedCredential =
   | ResolvedApiKeyCredential
-  | ResolvedCodexCredential;
+  | ResolvedCodexCredential
+  | ResolvedGrokOAuthCredential;
 
 export interface CredentialResolveOptions {
   readonly signal?: AbortSignal;
@@ -64,12 +70,17 @@ export class CredentialResolver {
 
 export function createProjectCredentialResolver(
   projectRoot: string,
-  options: { readonly codexStore?: CodexCredentialStore } = {},
+  options: {
+    readonly codexStore?: CodexCredentialStore;
+    readonly grokStore?: GrokCredentialStore;
+  } = {},
 ): CredentialResolver {
   return new CredentialResolver([
     new ProjectApiKeyCredentialProvider(projectRoot),
     new CodexAuthCredentialProvider(options.codexStore ?? new CodexCredentialStore()),
+    new GrokOAuthCredentialProvider(options.grokStore ?? new GrokCredentialStore()),
   ]);
 }
 
 export * from "./codex-auth.js";
+export * from "./grok-oauth.js";

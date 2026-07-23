@@ -8,8 +8,9 @@ InkOS keeps three concerns separate:
   It references a credential by ID and never embeds a secret.
 - A **credential reference** is non-secret metadata. Project API keys live in
   `.inkos/secrets.json`; imported Codex CLI credentials live under the
-  user-level `~/.inkos/credentials/codex` store. Grok credentials remain a
-  later integration. Login credentials never live in the project directory.
+  user-level `~/.inkos/credentials/codex` store, and Grok OAuth credentials
+  live under `~/.inkos/credentials/grok`. Login credentials never live in the
+  project directory.
 
 ## Schema version and compatibility
 
@@ -121,12 +122,11 @@ deadline while retaining history. Quota and authentication states require an
 explicit `ResilientChatRuntime.resetBackend()` or successful
 `recordProbe()` call; they never recover on a short timer.
 
-Codex credential references use the same pool and health policy as API-key
+Codex and Grok OAuth credential references use the same pool and health policy as API-key
 credentials. The dedicated adapter resolves and pre-refreshes the credential,
 forces at most one refresh after an explicit 401/403, retries the same backend
 once, then returns structured `auth` so the pool can mark `auth_required` and
-switch within the same logical route. Grok credentials remain unavailable
-until their dedicated integration.
+switch within the same logical route.
 
 ## Using existing Codex CLI credentials
 
@@ -158,6 +158,69 @@ non-incremental callers, and maps usage, cancellation, partial streams and
 provider errors into the existing Core result/error model. The route owns the
 GPT (or explicitly configured) prompt family, so a Codex-to-API-key switch
 reuses one family/revision and injects it only once per attempt.
+
+## Connecting Grok with OAuth/OIDC
+
+InkOS does not ship guessed production OAuth parameters. **Connect Grok** is
+enabled only when all three values are configured:
+
+```text
+INKOS_GROK_OAUTH_ISSUER=https://<trusted-issuer>
+INKOS_GROK_OAUTH_CLIENT_ID=<registered-public-client-id>
+INKOS_GROK_OAUTH_REDIRECT_URI=http://127.0.0.1:<registered-port>/<callback-path>
+INKOS_GROK_OAUTH_SCOPE=openid profile email offline_access   # optional
+```
+
+The issuer must be HTTPS. Discovery must return that exact issuer, and its
+authorization, token, and JWKS endpoints must remain on the trusted origin.
+HTTP issuer/endpoints are accepted only for an explicitly injected loopback
+mock in tests. The redirect must be an exact `127.0.0.1` HTTP URI with a fixed
+port and path already registered for the client; InkOS does not promise that
+the provider accepts a dynamic fallback port.
+
+Each login has an isolated ten-minute, single-use server session with
+high-entropy state and nonce plus PKCE S256. The callback validates the exact
+scheme, host, port, path, and state before exchange. A full callback URL can
+be pasted when the port is busy or the browser does not return. A bare
+one-time code is accepted only while bound to the explicitly selected pending
+session. Completion validates the ID-token signature from the trusted JWKS
+  and its issuer, audience/authorized party, expiry, issued-at/not-before,
+  nonce, and subject. Claims are display metadata, never a substitute for
+  provider authorization. Completion,
+denial, cancellation, validation failure, timeout, or Studio restart destroys
+the sensitive session; after a restart the user must start again.
+
+Multiple accounts live under the user credential root
+(`~/.inkos/credentials/grok` or `INKOS_CREDENTIAL_HOME/grok`). The registry
+contains safe account/expiry/refresh status only. Access, refresh, and ID
+tokens are in per-account files written atomically with restrictive
+permissions. Project routing stores only the stable `grok_oauth` credential
+ID. Studio can choose an active account while a route still references any
+specific account. Deletion is blocked while a backend references the
+credential. Local deletion is not provider-side revocation; revoke separately
+in the provider account. Token export, cloud sync, and account sharing are not
+supported.
+
+Near-expiry resolution uses per-credential single-flight refresh and
+atomically preserves rotated refresh tokens. A provider 401/403 forces at
+most one refresh and one same-backend replay. Another auth rejection marks
+the credential/backend `auth_required`; quota, rate-limit, network,
+cancellation, and visible-output behavior remains the shared structured route
+policy. Grok uses bearer injection at the transport boundary, shared
+usage/error/cancel handling, the route's explicit `grok` prompt family, and
+the final-boundary history conversion that removes unsupported private
+reasoning/thinking while preserving ordinary text, tool calls, and results.
+
+Troubleshooting:
+
+- A missing-field notice means no discovery request was made. Configure the
+  exact issuer, client ID, and registered redirect, then restart Studio.
+- For a port conflict or callback timeout, use the paste fallback without
+  changing the registered redirect.
+- `auth_required` means refresh was rejected or the refreshed token remained
+  unauthorized. Reconnect, then reset/probe backend health.
+- Issuer/origin, state, nonce, signature, audience, or expiry failures are
+  intentionally fail-closed and require a fresh connection.
 
 ## Studio management and A/B setup
 
@@ -191,7 +254,7 @@ routes cannot be deleted. Quota/auth health requires key/account repair plus a
 manual probe or reset; Studio does not describe those states as short
 automatic cooldowns.
 
-Codex credential import, refresh and Responses routing are available here.
-Grok OAuth remains future-compatible metadata only. Studio Agent chat does
+Codex credential import and Grok OAuth connection, refresh, and routing are available here.
+Studio Agent chat does
 not claim automatic failover yet; production pipelines are the routed path in
 this release.

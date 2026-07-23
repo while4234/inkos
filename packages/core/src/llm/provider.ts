@@ -30,7 +30,11 @@ import {
   type ModelGlobalPromptResolution,
 } from "./model-global-prompt.js";
 import { requestCodexResponses } from "./codex-responses-transport.js";
-import type { ResolvedCodexCredential } from "./credentials/index.js";
+import { requestGrokChatCompletion } from "./grok-chat-transport.js";
+import type {
+  ResolvedCodexCredential,
+  ResolvedGrokOAuthCredential,
+} from "./credentials/index.js";
 
 
 // === Streaming Monitor Types ===
@@ -173,6 +177,8 @@ export interface LLMClient {
   readonly _routingBackendId?: string;
   /** Internal dynamic Codex credential; never serialize or expose to callers. */
   readonly _codexCredential?: ResolvedCodexCredential;
+  /** Internal dynamic Grok credential; never serialize or expose to callers. */
+  readonly _grokCredential?: ResolvedGrokOAuthCredential;
   readonly defaults: {
     readonly temperature: number;
     /**
@@ -1230,6 +1236,21 @@ export async function chatCompletion(
               model,
               messages: preparedMessages,
               credential: client._codexCredential,
+              extra: resolved.extra,
+              proxyUrl: client.proxyUrl,
+              signal,
+              onTextDelta,
+              errorContext: errorCtx,
+            });
+          }
+          if (client._grokCredential) {
+            return requestGrokChatCompletion({
+              baseUrl: client._piModel?.baseUrl,
+              model,
+              messages: preparedMessages,
+              credential: client._grokCredential,
+              temperature: resolved.temperature,
+              maxTokens: resolved.maxTokens,
               extra: resolved.extra,
               proxyUrl: client.proxyUrl,
               signal,

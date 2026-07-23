@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Eye, EyeOff, Loader2, Plus, Search, X } from "lucide-react";
 import { GROUP_ORDER, getGroupDescription, getGroupLabel, getGroupShortLabel } from "../constants/service-groups";
 import { tr } from "../lib/app-language";
@@ -7,6 +7,7 @@ import { useServiceStore } from "../store/service";
 import type { EndpointGroup, ServiceInfo } from "../store/service";
 import { ServiceQuickLinks, getServiceQuickLinks } from "../components/ServiceQuickLinks";
 import { ServiceConfigSourceCard } from "../components/ServiceConfigSourceCard";
+import { ModelRoutingPage } from "./ModelRoutingPage";
 
 interface Nav {
   toDashboard: () => void;
@@ -279,6 +280,10 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
   const [query, setQuery] = useState("");
   const [selectedGroups, setSelectedGroups] = useState<Set<EndpointGroup>>(new Set());
   const [onlyConnected, setOnlyConnected] = useState(false);
+  const [normalizedBackendCount, setNormalizedBackendCount] = useState<number | null>(null);
+  const updateNormalizedBackendCount = useCallback((count: number) => {
+    setNormalizedBackendCount(count);
+  }, []);
 
   const bankServices = useMemo(
     () => services.filter((s) => !s.service.startsWith("custom")),
@@ -360,14 +365,40 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
 
       <ServiceConfigSourceCard onChange={() => { void refreshServices(); }} />
 
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-medium">{tr("登录凭证与高级后端", "Login credentials and advanced backends")}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {tr(
+              "先在服务商管理中连接 Codex、Grok 或自定义 API 后端，再配置模型连续性和故障转移。",
+              "Connect Codex, Grok, or a custom API backend here before configuring model continuity and failover.",
+            )}
+          </p>
+        </div>
+        <ModelRoutingPage
+          embedded
+          mode="providers"
+          nav={{
+            toServices: () => undefined,
+            toProjectSettings: () => undefined,
+          }}
+          onBackendCountChange={updateNormalizedBackendCount}
+        />
+      </section>
+
       <button
         type="button"
-        onClick={nav.toModelRouting}
-        className="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left transition-colors hover:bg-primary/10"
+        disabled={normalizedBackendCount === 0}
+        onClick={() => {
+          if (normalizedBackendCount !== 0) nav.toModelRouting();
+        }}
+        className="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="block text-sm font-medium">{tr("模型连续性与故障转移", "Model continuity and failover")}</span>
         <span className="mt-1 block text-xs text-muted-foreground">
-          {tr("管理后端、逻辑路由、健康状态、候选顺序和最近切换。", "Manage backends, logical routes, health, candidate order, and recent switches.")}
+          {normalizedBackendCount === 0
+            ? tr("请先配置至少一个后端。", "Configure at least one backend first.")
+            : tr("设置逻辑路由、健康状态、候选顺序和最近切换。", "Configure logical routes, health, candidate order, and recent switches.")}
         </span>
       </button>
 

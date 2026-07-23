@@ -224,11 +224,18 @@ Troubleshooting:
 
 ## Studio management and A/B setup
 
-Open **Providers → Model continuity and failover** (`#/model-routing`) to
-manage the normalized graph. Studio's browser API exposes credential status
-and a short mask only; it never returns a complete API key. Leaving a key
-field blank keeps the stored value. Replacing a key is an explicit PUT and
-clearing it is an explicit DELETE.
+Open **Providers** (`#/services`) first to import Codex credentials, connect
+Grok, or create API-key backends. Credentials and backend connections belong
+to provider setup. Studio's browser API exposes credential status and a short
+mask only; it never returns a complete API key. Leaving a key field blank
+keeps the stored value. Replacing a key is an explicit PUT and clearing it is
+an explicit DELETE.
+
+After at least one backend exists, open **Providers → Model continuity and
+failover** (`#/model-routing`) to configure the normalized logical routes,
+candidate order, health, and failover behavior. An empty project opens as an
+onboarding state and directs the user back to Providers instead of treating
+the missing routing graph as an error.
 
 To configure two OpenAI-compatible endpoints:
 
@@ -254,7 +261,8 @@ routes cannot be deleted. Quota/auth health requires key/account repair plus a
 manual probe or reset; Studio does not describe those states as short
 automatic cooldowns.
 
-Codex credential import and Grok OAuth connection, refresh, and routing are available here.
+Codex credential import and Grok OAuth connection are available on Providers;
+their backends participate in the same refresh, health, and routing runtime.
 
 ## Studio Agent streaming continuity
 

@@ -26,6 +26,13 @@ interface ProjectRoutingDocument {
 type RoutingMutation = (routing: ModelRoutingConfig) => void;
 
 const projectMutationQueues = new Map<string, Promise<void>>();
+const EMPTY_ROUTING: ModelRoutingConfig = {
+  version: 1,
+  credentials: [],
+  backends: [],
+  routes: [],
+  defaultRouteId: null,
+};
 
 export class ModelManagementStore {
   public constructor(public readonly projectRoot: string) {}
@@ -51,8 +58,7 @@ export class ModelManagementStore {
       mutate(routing);
       const parsed = parseRouting(routing);
       const config = structuredClone(current.config);
-      const llm = objectValue(config.llm);
-      if (!llm) throw new ApiError(409, "MODEL_ROUTING_MISSING", "Project LLM configuration is missing.");
+      const llm = objectValue(config.llm) ?? {};
       llm.routing = parsed;
       synchronizeLegacySelection(llm, parsed);
       config.llm = llm;
@@ -86,7 +92,7 @@ export class ModelManagementStore {
       routing.backends.push(backend);
       const parsed = parseRouting(routing);
       const config = structuredClone(current.config);
-      const llm = objectValue(config.llm)!;
+      const llm = objectValue(config.llm) ?? {};
       llm.routing = parsed;
       config.llm = llm;
 
@@ -276,7 +282,8 @@ export class ModelManagementStore {
     const raw = JSON.parse(await readFile(join(this.projectRoot, "inkos.json"), "utf-8")) as Record<string, unknown>;
     const llm = objectValue(raw.llm);
     if (!llm?.routing) {
-      throw new ApiError(409, "MODEL_ROUTING_MISSING", "Normalized model routing has not been configured.");
+      const routing = structuredClone(EMPTY_ROUTING);
+      return { config: raw, routing, revision: routingRevision(routing) };
     }
     const routing = parseRouting(llm.routing);
     return { config: raw, routing, revision: routingRevision(routing) };
@@ -338,6 +345,7 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 }
 
 function synchronizeLegacySelection(llm: Record<string, unknown>, routing: ModelRoutingConfig): void {
+  if (!routing.defaultRouteId) return;
   const route = routing.routes.find((item) => item.id === routing.defaultRouteId);
   const candidate = route?.candidates[0];
   const backend = candidate

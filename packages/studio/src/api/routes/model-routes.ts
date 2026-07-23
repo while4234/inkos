@@ -33,6 +33,9 @@ export function registerModelRouteRoutes(app: Hono, store: ModelManagementStore)
           throw new ApiError(409, "MODEL_ROUTE_DUPLICATE_ID", `Route "${body.route.id}" already exists.`);
         }
         routing.routes.push(body.route);
+        if (routing.defaultRouteId === null) {
+          routing.defaultRouteId = body.route.id;
+        }
       },
     );
     return c.json({ ok: true, revision: result.revision }, 201, { ETag: `"${result.revision}"` });

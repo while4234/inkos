@@ -247,9 +247,9 @@ Studio/project service 配置
 
 也就是说，CLI 默认可以复用 Studio 配好的服务和密钥；如果 env 里声明了 `INKOS_LLM_SERVICE`、`INKOS_LLM_MODEL`、`INKOS_LLM_BASE_URL` 或 `INKOS_LLM_API_KEY`，则作为覆盖层生效。旧 env 只写 `baseUrl + model + apiKey` 也能继续用，InkOS 会尽量从 baseUrl 反推 service。
 
-如需使用已有 Codex CLI 登录凭证，请在 Studio 的「模型连续性」页面选择「使用 Codex 登录凭证」。InkOS 会按 `CODEX_AUTH_FILE`、`CODEX_HOME/auth.json`、项目 `.codex/auth.json`、用户 `~/.codex/auth.json` 的顺序检测并去重；默认把验证后的 `auth.json` 副本导入用户级 `~/.inkos/credentials/codex`，项目配置只保存 credential ID。它不是 InkOS 内的浏览器 OAuth 登录。临近过期时受管理副本会 single-flight 刷新，明确 401/403 最多强制刷新一次；重新导入会替换副本，删除 InkOS 引用绝不会删除外部 Codex CLI 文件。完整安全与传输语义见 [MODEL_ROUTING.md](./MODEL_ROUTING.md)。
+如需使用已有 Codex CLI 登录凭证，请在 Studio 的「服务商管理」页面找到「登录凭证与高级后端」，再选择「使用 Codex 登录凭证」。InkOS 会按 `CODEX_AUTH_FILE`、`CODEX_HOME/auth.json`、项目 `.codex/auth.json`、用户 `~/.codex/auth.json` 的顺序检测并去重；默认把验证后的 `auth.json` 副本导入用户级 `~/.inkos/credentials/codex`，项目配置只保存 credential ID。它不是 InkOS 内的浏览器 OAuth 登录。临近过期时受管理副本会 single-flight 刷新，明确 401/403 最多强制刷新一次；重新导入会替换副本，删除 InkOS 引用绝不会删除外部 Codex CLI 文件。完整安全与传输语义见 [MODEL_ROUTING.md](./MODEL_ROUTING.md)。
 
-如需连接 Grok，请先显式配置 `INKOS_GROK_OAUTH_ISSUER`、`INKOS_GROK_OAUTH_CLIENT_ID` 和已注册的 `INKOS_GROK_OAUTH_REDIRECT_URI`，再在同一页面选择「连接 Grok」。InkOS 使用 OIDC discovery、PKCE、state/nonce、固定 `127.0.0.1` callback，并提供粘贴 callback URL/一次性 code 的备用流程；缺少配置时不会发起网络请求。多个账号和 active 状态保存在用户级凭证目录，项目路由只保存稳定 credential ID。删除本地凭证不等于撤销 provider 授权。刷新、401/403 单次强制重试、Grok 模型族提示词、历史 thinking 转换及故障排除见 [MODEL_ROUTING.md](./MODEL_ROUTING.md)。
+如需连接 Grok，请先显式配置 `INKOS_GROK_OAUTH_ISSUER`、`INKOS_GROK_OAUTH_CLIENT_ID` 和已注册的 `INKOS_GROK_OAUTH_REDIRECT_URI`，再在「服务商管理」的同一区域选择「连接 Grok」。InkOS 使用 OIDC discovery、PKCE、state/nonce、固定 `127.0.0.1` callback，并提供粘贴 callback URL/一次性 code 的备用流程；缺少配置时不会发起网络请求。多个账号和 active 状态保存在用户级凭证目录，项目路由只保存稳定 credential ID。删除本地凭证不等于撤销 provider 授权。刷新、401/403 单次强制重试、Grok 模型族提示词、历史 thinking 转换及故障排除见 [MODEL_ROUTING.md](./MODEL_ROUTING.md)。
 
 一次性指定服务或模型：
 

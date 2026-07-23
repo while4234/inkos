@@ -96,7 +96,7 @@ export function backendInstanceDTO(
 
 export function logicalModelRouteDTO(
   route: LogicalModelRoute,
-  defaultRouteId: string,
+  defaultRouteId: string | null,
 ): LogicalModelRouteDTO {
   return {
     ...route,

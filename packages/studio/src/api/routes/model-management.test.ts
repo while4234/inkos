@@ -143,6 +143,83 @@ describe("model management API", () => {
     });
   });
 
+  it("supports provider onboarding before normalized routing exists", async () => {
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      name: "empty-model-management",
+      version: "0.1.0",
+    }), "utf-8");
+    await writeFile(join(root, ".inkos", "secrets.json"), JSON.stringify({
+      services: {},
+      credentials: {},
+    }), "utf-8");
+
+    const initial = await json<{
+      revision: string;
+      backends: unknown[];
+    }>(app, "/api/v1/model-backends");
+    expect(initial.backends).toEqual([]);
+
+    const created = await app.request("http://localhost/api/v1/model-backends", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: initial.revision,
+        credential: {
+          id: "credential-first",
+          kind: "api_key",
+          label: "First provider",
+          scope: "project",
+        },
+        backend: {
+          id: "backend-first",
+          displayName: "First provider",
+          service: "custom:first",
+          provider: "custom",
+          baseUrl: "https://provider.example/v1",
+          credentialRef: { id: "credential-first", kind: "api_key" },
+          enabled: true,
+          transport: { apiFormat: "chat", stream: true },
+        },
+        apiKey: "fixture-provider-onboarding-key",
+      }),
+    });
+    expect(created.status).toBe(201);
+
+    const afterBackend = await json<{
+      revision: string;
+      defaultRouteId: string | null;
+      routes: unknown[];
+    }>(app, "/api/v1/model-routes");
+    expect(afterBackend).toMatchObject({
+      defaultRouteId: null,
+      routes: [],
+    });
+
+    const route = await app.request("http://localhost/api/v1/model-routes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: afterBackend.revision,
+        route: {
+          id: "route-first",
+          displayName: "First route",
+          promptFamily: "gpt",
+          enabled: true,
+          candidates: [{
+            backendId: "backend-first",
+            upstreamModelId: "model-first",
+          }],
+        },
+      }),
+    });
+    expect(route.status).toBe(201);
+
+    await expect(json(app, "/api/v1/model-routes")).resolves.toMatchObject({
+      defaultRouteId: "route-first",
+      routes: [{ id: "route-first", isDefault: true }],
+    });
+  });
+
   it("does not let existingCredential bypass the Codex credential boundary", async () => {
     const initial = await json<{ revision: string }>(app, "/api/v1/model-backends");
     const response = await app.request("http://localhost/api/v1/model-backends", {

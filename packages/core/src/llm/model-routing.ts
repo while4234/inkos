@@ -81,7 +81,7 @@ export const ModelRoutingConfigSchema = z.object({
   credentials: z.array(CredentialMetadataSchema),
   backends: z.array(BackendInstanceSchema),
   routes: z.array(LogicalModelRouteSchema),
-  defaultRouteId: StableIdSchema,
+  defaultRouteId: StableIdSchema.nullable(),
 }).strict().superRefine((routing, context) => {
   addDuplicateIdIssues(routing.credentials, "credentials", context);
   addDuplicateIdIssues(routing.backends, "backends", context);
@@ -131,6 +131,26 @@ export const ModelRoutingConfigSchema = z.object({
       }
     });
   });
+
+  if (routing.routes.length === 0) {
+    if (routing.defaultRouteId !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "defaultRouteId must be null until the first logical route is configured",
+        path: ["defaultRouteId"],
+      });
+    }
+    return;
+  }
+
+  if (routing.defaultRouteId === null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "defaultRouteId is required when logical routes are configured",
+      path: ["defaultRouteId"],
+    });
+    return;
+  }
 
   const defaultRoute = routes.get(routing.defaultRouteId);
   if (!defaultRoute) {

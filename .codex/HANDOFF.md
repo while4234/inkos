@@ -1,83 +1,64 @@
 # Project Handoff
 
-Last updated: 2026-07-24 06:14 CST
+Last updated: 2026-07-24 07:28 CST
 Project root: `D:\lnkos`
-Branch: `feature/model-continuity-pr09`
+Branch: `feature/provider-auth-onboarding`
 Status: acceptance_passed_uncommitted
 
 ## Current Goal
 
-Accept and deliver PR-09 of `model-continuity-p0`: unify routing trace,
-per-backend usage/cost, safe persistence, Studio diagnostics, and controlled
-health recovery across production and Agent paths.
+Correct the model-continuity onboarding order: configure Codex, Grok, or
+API-key backends under Providers first, then configure logical routing and
+failover on the Model continuity page.
 
 ## Current Position
 
-- Branch HEAD is the delivered PR-08 base `95a041c8`; PR-09 is uncommitted.
-- The independent PR-09 implementation agent did not commit, push, switch
-  branches, or mutate pipeline state.
-- Intended atomic subject: `feat: add routing observability and recovery`.
+- The implementation and acceptance checks have passed on
+  `feature/provider-auth-onboarding`.
+- Studio is running the rebuilt output on port 4567 with project root
+  `D:\inkos-data\default`.
+- No real provider login, OAuth flow, API key, or model request was used.
 
 ## Recent Actions
 
-- Replaced the lightweight routing-event-only model with bounded routing trace
-  schema version 1 and a shared collector for production and Agent events.
-- Added provider-observed attempt/backend usage and explicit candidate pricing
-  with source/revision. Missing usage/price remains `null`/`unknown`.
-- Added safe trace persistence to Agent transcript summaries and optional
-  chapter traces; upgraded Studio task snapshots to atomic version 2 writes
-  with version 1 read compatibility.
-- Added Studio SSE/task/Agent trace details for actual backend/model, switches,
-  retries, per-backend tokens, known/unknown cost, and final state.
-- Added single-flight half-open business recovery for unknown/expired-cooldown
-  backends and timeout/cancel/single-flight probes.
-- Propagated probe cancellation into the upstream fetch, applied the common
-  probe guard to every Studio probe entry point, and made empty model probes
-  fail closed instead of reporting a healthy backend.
-- Made terminal trace status exact for success, exhaustion, cancellation, and
-  interruption; trace construction now fails closed and bounded attempt
-  sequence numbers remain unique.
-- Reset repaired credential backends to a half-open `unknown` state so the next
-  request can recover without a Studio restart.
-- Added architecture/user documentation and retained explicit checkpoint and
-  post-output continuation non-goals.
+- Made an absent normalized routing graph a valid empty onboarding graph with
+  `defaultRouteId: null`.
+- Kept legacy model execution active until a logical route exists; the first
+  created logical route becomes the default automatically.
+- Moved Codex credential import, Grok connection, and API-key backend creation
+  into Studio Providers.
+- Gated the continuity entry until a backend exists and added a clear
+  empty-project link back to Providers.
+- Updated user documentation and added Core/schema plus Studio API regression
+  tests for backend-first onboarding.
 
 ## Validation
 
-- Main acceptance focused Core routing/health/runtime/Agent/schema/inventory
-  suites: 7 files / 96 tests passed.
-- Main acceptance focused Studio task/activity/health/UI suites: 6 files /
-  30 tests passed.
-- Studio server regression suite: 1 file / 151 tests passed.
-- Full repository pnpm 9.15.9 frozen install, build, typecheck, test, and
-  publish-manifest verification passed. Final clean test run: Core 200 files /
-  1932 tests, Studio 64 files / 582 tests, CLI 41 files / 229 tests.
-- A newly reachable Vitest hoisting defect in `server.test.ts` was corrected by
-  deferring the task-store import until after hoisted Core mocks initialize.
-- Root lint accurately reported that no selected workspace package defines a
-  lint script.
-- Repository-external Studio browser smoke loaded `#/model-routing`; the model
-  continuity, backend health, logical route, and recent activity surfaces were
-  visible. Browser console: 0 errors, 0 warnings.
-- Browser snapshot leakage scan found zero fake keys, access/refresh-token
-  fields, Authorization/Bearer values, auth token objects, or full global
-  prompt markers. Temporary browser/content artifacts were removed.
-- `git diff --check` passed; changed/untracked path review found no runtime
-  content or pipeline-state files.
+- pnpm 9.15.9 frozen install, build, typecheck, test, and publish-manifest
+  verification passed.
+- Final clean tests: Core 200 files / 1934 tests, Studio 64 files / 583 tests,
+  CLI 41 files / 229 tests.
+- The first full test attempt ended with a transient Vitest worker
+  `ERR_IPC_CHANNEL_CLOSED`; the unchanged rerun passed completely.
+- `git diff --check` passed.
+- Live HTTP smoke: root and referenced JS/CSS assets returned 200;
+  `/api/v1/model-backends` and `/api/v1/model-routes` returned empty valid
+  collections instead of `MODEL_ROUTING_MISSING`.
+- Headless Chromium verified `#/services` exposes Codex, Grok, and API-key
+  onboarding; `#/model-routing` shows the backend-first empty state, contains
+  no old error, and produced zero console errors or warnings.
 
 ## Blockers / Risks
 
 - No known implementation blocker.
-- No real LLM, Codex, Grok, OAuth, refresh, quota, or usage request was run.
-- Provider usage unavailable on a failure remains unknown; it is never
-  estimated. Cost is unknown unless explicit price source/revision exists.
-- Step-level checkpointing and continuation from existing visible output remain
-  explicitly unsupported.
+- Grok still requires explicit issuer, client ID, and registered redirect URI;
+  missing configuration remains fail-closed by design.
+- The real user content project currently has zero normalized backends, so
+  continuity remains disabled until one is created under Providers.
 
 ## Next Steps
 
-1. Complete final diff, path, and credential leakage review.
-2. Create the atomic PR-09 commit, fast-forward local `master`,
-   push only `origin/master`, and verify the remote SHA.
-3. Complete PR-09 pipeline state and run the final nine-stage SHA/state
-   consistency check.
+1. Complete final diff and credential/path review.
+2. Commit the accepted fix.
+3. Fast-forward local `master`, push only `origin/master`, and verify the
+   remote SHA.

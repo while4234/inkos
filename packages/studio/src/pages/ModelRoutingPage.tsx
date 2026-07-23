@@ -20,6 +20,13 @@ interface Nav {
   readonly toProjectSettings: () => void;
 }
 
+interface ModelRoutingPageProps {
+  readonly nav: Nav;
+  readonly mode?: "continuity" | "providers";
+  readonly embedded?: boolean;
+  readonly onBackendCountChange?: (count: number) => void;
+}
+
 interface RoutingView {
   readonly revision: string;
   readonly backends: ReadonlyArray<BackendInstanceDTO>;
@@ -34,7 +41,12 @@ interface RoutingView {
 
 const fieldClass = "w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm";
 
-export function ModelRoutingPage({ nav }: { nav: Nav }) {
+export function ModelRoutingPage({
+  nav,
+  mode = "continuity",
+  embedded = false,
+  onBackendCountChange,
+}: ModelRoutingPageProps) {
   const [view, setView] = useState<RoutingView | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
@@ -154,6 +166,10 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
     () => new Map((view?.health ?? []).map((health) => [health.backendId, health])),
     [view?.health],
   );
+
+  useEffect(() => {
+    if (view) onBackendCountChange?.(view.backends.length);
+  }, [onBackendCountChange, view]);
 
   if (!view) {
     return <div role="status" className="flex items-center gap-2 text-sm"><Loader2 className="animate-spin" size={16} />{error || tr("加载中", "Loading")}</div>;
@@ -328,8 +344,8 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
     });
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className={embedded ? "space-y-6" : "mx-auto max-w-5xl space-y-6"}>
+      {!embedded && <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-serif text-2xl">{tr("模型连续性", "Model continuity")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{tr("凭证只显示状态和掩码；路由按候选顺序切换。", "Credentials expose only status and masks; routes fail over in candidate order.")}</p>
@@ -339,10 +355,11 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
           <button onClick={nav.toProjectSettings} className="rounded-lg border px-3 py-2 text-sm">{tr("Agent 覆盖", "Agent overrides")}</button>
           <button onClick={() => void reload()} aria-label={tr("刷新", "Refresh")} className="rounded-lg border p-2"><RefreshCw size={16} /></button>
         </div>
-      </div>
+      </div>}
 
       {error && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</div>}
 
+      {mode === "providers" && <>
       <section className="space-y-3 rounded-xl border border-border/50 p-4">
         <h2 className="flex items-center gap-2 font-medium"><KeyRound size={16} />{tr("使用 Codex 登录凭证", "Use Codex login credentials")}</h2>
         <p className="text-sm text-muted-foreground">
@@ -562,7 +579,24 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
         </div>
         <button disabled={busy !== "" || !backendId.trim() || !backendName.trim() || !baseUrl.trim() || !apiKey.trim()} onClick={createBackend} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">{tr("创建后端", "Create backend")}</button>
       </section>
+      </>}
 
+      {mode === "continuity" && view.backends.length === 0 && (
+        <section className="space-y-3 rounded-xl border border-dashed border-border/60 p-6 text-center">
+          <h2 className="font-medium">{tr("请先配置模型后端", "Configure a model backend first")}</h2>
+          <p className="text-sm text-muted-foreground">
+            {tr(
+              "凭证和后端属于服务商配置；配置完成后再在这里设置逻辑路由、候选顺序和故障转移。",
+              "Credentials and backends belong in Providers. Return here after setup to configure logical routes, candidate order, and failover.",
+            )}
+          </p>
+          <button onClick={nav.toServices} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">
+            {tr("前往服务商管理", "Go to Providers")}
+          </button>
+        </section>
+      )}
+
+      {mode === "continuity" && view.backends.length > 0 && <>
       <section className="space-y-3 rounded-xl border border-border/50 p-4">
         <h2 className="flex items-center gap-2 font-medium"><KeyRound size={16} />{tr("后端与健康", "Backends and health")}</h2>
         {view.backends.map((backend) => {
@@ -785,6 +819,7 @@ export function ModelRoutingPage({ nav }: { nav: Nav }) {
           </div>
         ))}
       </section>
+      </>}
     </div>
   );
 }

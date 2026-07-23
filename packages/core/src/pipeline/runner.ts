@@ -427,7 +427,7 @@ export class PipelineRunner {
   constructor(config: PipelineConfig) {
     this.compatibilityClient = config.client;
     const routing = config.defaultLLMConfig?.routing;
-    if (routing && config.defaultLLMConfig) {
+    if (routing?.defaultRouteId && config.defaultLLMConfig) {
       this.routingRuntime = new ResilientChatRuntime({
         routing,
         projectRoot: config.projectRoot,

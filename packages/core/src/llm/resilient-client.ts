@@ -113,14 +113,15 @@ export function createRouteAwareLLMClient(
   } = options;
   const compatibilityClient = providedClient ?? createLLMClient(config);
   const routing = config.routing;
-  if (!routing) return compatibilityClient;
+  const selectedRouteId = routeId ?? routing?.defaultRouteId;
+  if (!routing || !selectedRouteId) return compatibilityClient;
   const runtime = new ResilientChatRuntime({
     ...runtimeOptions,
     routing,
     baseConfig: config,
   });
   return runtime.createRouteClient(
-    routeId ?? routing.defaultRouteId,
+    selectedRouteId,
     compatibilityClient,
   );
 }

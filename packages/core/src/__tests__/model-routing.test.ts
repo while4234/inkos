@@ -45,6 +45,36 @@ function validRouting() {
 }
 
 describe("ModelRoutingConfigSchema", () => {
+  it("accepts an onboarding graph before the first logical route exists", () => {
+    expect(ModelRoutingConfigSchema.parse({
+      version: 1,
+      credentials: [],
+      backends: [],
+      routes: [],
+      defaultRouteId: null,
+    })).toEqual({
+      version: 1,
+      credentials: [],
+      backends: [],
+      routes: [],
+      defaultRouteId: null,
+    });
+  });
+
+  it("requires a default as soon as a logical route exists", () => {
+    const routing = validRouting();
+
+    const result = ModelRoutingConfigSchema.safeParse({
+      ...routing,
+      defaultRouteId: null,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path.join("."))).toContain("defaultRouteId");
+    }
+  });
+
   it.each(["gpt", "grok", "deepseek", "none"] as const)(
     "accepts the explicit %s prompt family",
     (family) => {

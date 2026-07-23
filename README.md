@@ -426,7 +426,7 @@ inkos compose chapter 吞天魔帝
 
 不同 Agent 可以走不同模型和 Provider。写手用 Claude（创意强），审计用 GPT-4o（便宜快速），雷达用本地模型（零成本）。`inkos config set-model` 按 agent 粒度配置，未配置的自动回退全局模型。
 
-规范化逻辑模型、后端实例、凭证引用、自动迁移和恢复策略见 [MODEL_ROUTING.md](MODEL_ROUTING.md)。
+规范化逻辑模型、后端实例、凭证引用、自动迁移和恢复策略见 [MODEL_ROUTING.md](MODEL_ROUTING.md)；结构化供应商错误、取消和安全展示契约见 [PROVIDER_ERRORS.md](PROVIDER_ERRORS.md)。
 
 ### 守护进程 + 通知推送
 

@@ -31,6 +31,7 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - 2026-07-23 `1a2fd09b` imported: exact upstream `master` baseline plus 38 release tags; `upstream-sync` created at the same commit.
 - 2026-07-23 `6b72785a` added: repository attribution, durable update semantics, local setup/start launchers, and validation records.
 - 2026-07-23 PR-01 acceptance completed: added the logical-model routing foundation, atomic credential migration, compatibility writers, masked Studio secret reads, and a bounded CLI doctor connectivity probe. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1781, Studio 549, CLI 229 tests).
+- 2026-07-23 PR-02 acceptance completed: added structured provider errors, conservative classification, bounded Retry-After parsing, cancellation and visible-output semantics, safe display/serialization, and shared Core/CLI/Studio compatibility adapters. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1811, Studio 549, CLI 229 tests).
 
 ## Model Continuity Pipeline
 
@@ -40,6 +41,10 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - PR-01 commit subject: `feat: add logical model routing foundation`.
 - PR-01 security review: no complete API key/token/Authorization data or runtime/pipeline state is included.
 - PR-01 compatibility boundary: route references execute on the current backend; cross-backend retry/failover remains reserved for PR-03.
+- PR-02 branch: `feature/model-continuity-pr02`.
+- PR-02 commit subject: `feat: add structured provider errors`.
+- PR-02 security review: provider causes and raw bodies stay out of safe JSON/API output; added Authorization/API-key strings are mock fixtures only, and no real credential or runtime/pipeline state is included.
+- PR-02 scope boundary: classification exposes retry/failover eligibility but does not select, score, persist health for, or switch backends; those behaviors remain reserved for PR-03.
 
 ## Rollback Notes
 

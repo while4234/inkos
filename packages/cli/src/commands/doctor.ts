@@ -2,7 +2,11 @@ import { Command } from "commander";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { findProjectRoot, log, logError, GLOBAL_ENV_PATH } from "../utils.js";
-import { fetchWithProxy } from "@actalk/inkos-core";
+import {
+  classifyProviderError,
+  fetchWithProxy,
+  type ProviderErrorCategory,
+} from "@actalk/inkos-core";
 import {
   ensureNodeRuntimePinFiles,
   evaluateSqliteMemorySupport,
@@ -299,6 +303,7 @@ export const doctorCommand = new Command("doctor")
         let connected = false;
         let detectedDetail = "";
         let lastError = "Unknown error";
+        let lastErrorCategory: ProviderErrorCategory = "unknown";
         const modelsBaseUrl = resolveDoctorModelsBaseUrl(
           typeof llmConfig.service === "string" ? llmConfig.service : undefined,
           llmConfig.baseUrl,
@@ -332,7 +337,9 @@ export const doctorCommand = new Command("doctor")
               detectedDetail = `OK (model: ${model}, apiFormat=${plan.apiFormat}, stream=${plan.stream}, tokens: ${response.usage.totalTokens})`;
               break;
             } catch (error) {
-              lastError = error instanceof Error ? error.message : String(error);
+              const providerError = classifyProviderError(error);
+              lastError = providerError.safeMessage;
+              lastErrorCategory = providerError.category;
             }
           }
           if (connected) {
@@ -346,7 +353,11 @@ export const doctorCommand = new Command("doctor")
           detail: connected ? detectedDetail : lastError.split("\n")[0]!,
         });
 
-        if (!connected && /\b(?:401|403|429)\b|unauthorized|forbidden|quota|balance|insufficient|exceeded|额度|余额|配额/i.test(lastError)) {
+        if (!connected && (
+          lastErrorCategory === "quota"
+          || lastErrorCategory === "rate_limit"
+          || lastErrorCategory === "auth"
+        )) {
           checks.push({
             name: "  Hint",
             ok: false,

@@ -348,7 +348,7 @@ inkos compose chapter my-book
 
 異なるエージェントに異なるモデルとプロバイダーを使用可能。WriterにClaude（より強力なクリエイティブ）、AuditorにGPT-4o（安価で高速）、Radarにローカルモデル（コストゼロ）。`inkos config set-model` でエージェントごとに設定可能；未設定のエージェントはグローバルモデルにフォールバック。
 
-正規化された論理モデル、バックエンド、認証情報参照、自動移行、復旧については [MODEL_ROUTING.md](MODEL_ROUTING.md) を参照してください。
+正規化された論理モデル、バックエンド、認証情報参照、自動移行、復旧については [MODEL_ROUTING.md](MODEL_ROUTING.md) を参照してください。構造化されたプロバイダーエラー、キャンセル、安全な表示境界については [PROVIDER_ERRORS.md](PROVIDER_ERRORS.md) を参照してください。
 
 ### デーモンモード + 通知
 

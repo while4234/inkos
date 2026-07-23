@@ -1,9 +1,9 @@
 # Project Handoff
 
-Last updated: 2026-07-23 23:04 CST
+Last updated: 2026-07-23 23:41 CST
 Project root: D:\lnkos
 Pipeline: `model-continuity-p0`
-Position: PR-01 accepted on `feature/model-continuity-pr01`; delivery target is `origin/master`
+Position: PR-02 accepted on `feature/model-continuity-pr02`; delivery target is `origin/master`
 
 ## Current Goal
 
@@ -11,58 +11,57 @@ Deliver PR-01 through PR-09 serially. Each PR uses a different implementation ag
 
 ## Current Position
 
-PR-01 establishes the versioned routing schema, stable credential/backend/route identities, project API-key credential resolution, atomic migration, legacy config compatibility, and route-aware model overrides. Its implementation and acceptance gates are complete. The pipeline state under `.codex/pr-pipeline/` is intentionally local-only and records the pushed SHA after remote verification.
+PR-01 is already committed and verified on `origin/master` at `9d8b212f6f27e7b6860158c818ccc6cb96ac4aef`. PR-02 establishes the structured provider-error contract required by later retry/failover policy. Its implementation, focused validation, full repository gates, diff review, and safe-output review are complete. It is ready for one atomic commit, fast-forward delivery to `master`, remote SHA verification, and pipeline completion recording.
 
 ## Recent Actions
 
-- Added versioned routing models and public Core exports for credentials, backend instances, logical routes, candidates, and resolvers.
-- Integrated idempotent migration into normal project loading, with atomic config/secret writes and rollback on partial failure.
-- Preserved old single-service, multi-service, string override, object override, CLI, and Studio write paths through compatibility adapters.
-- Changed Studio service and cover secret reads to return configured/masked status instead of complete API keys.
-- Added a six-second cancellation budget to CLI doctor connectivity probing so the Windows integration test completes within its process deadline.
-- Added focused migration, routing, secret, resolver, pipeline, Studio, and CLI regression coverage.
+- Added `ProviderError`, `ProviderCancellationError`, all eleven categories, safe serialization/display mapping, and public Core exports.
+- Added status/code/type-first classification with conservative message fallback, bounded integer/HTTP-date Retry-After parsing, route identity, request ID, cause, and visible-output evidence.
+- Refactored native OpenAI/Anthropic/Responses transports and the pi-ai boundary to retain structured errors until presentation.
+- Unified transient retry decisions in provider, Play, and short-fiction paths through the classifier without implementing backend switching.
+- Updated CLI doctor, Core provider verification, and Studio provider/error boundaries to use safe structured messages.
+- Added table-driven classifier tests, a local mock HTTP transport test, cancellation/retry tests, streaming visibility tests, and Studio/CLI regressions.
 
 ## Changed / Relevant Files
 
-- `packages/core/src/llm/model-routing.ts`
-- `packages/core/src/llm/credentials/index.ts`
-- `packages/core/src/llm/atomic-json.ts`
-- `packages/core/src/llm/config-migration.ts`
-- `packages/core/src/llm/secrets.ts`
-- `packages/core/src/models/project.ts`
-- `packages/core/src/utils/config-loader.ts`
-- `packages/core/src/utils/effective-llm-config.ts`
-- `packages/core/src/pipeline/runner.ts`
-- `packages/cli/src/commands/config.ts`
+- `packages/core/src/llm/provider-error.ts`
+- `packages/core/src/llm/provider.ts`
+- `packages/core/src/llm/providers/verify.ts`
+- `packages/core/src/agents/short-fiction.ts`
+- `packages/core/src/play/play-agents.ts`
+- `packages/core/src/index.ts`
 - `packages/cli/src/commands/doctor.ts`
 - `packages/studio/src/api/server.ts`
-- `packages/studio/src/pages/ServiceDetailPage.tsx`
-- `packages/studio/src/pages/ServiceListPage.tsx`
-- `packages/studio/src/pages/service-detail-state.ts`
-- `MODEL_ROUTING.md` and localized README routing links
+- `packages/core/src/__tests__/provider-error.test.ts`
+- `packages/core/src/__tests__/provider-error-transport.test.ts`
+- `packages/core/src/__tests__/provider.test.ts`
+- `packages/studio/src/api/server.test.ts`
+- `PROVIDER_ERRORS.md` and localized README links
 
 ## Validation
 
 - `corepack pnpm@9.15.9 install --frozen-lockfile` -> passed.
-- Root `build` and `typecheck` -> passed after final changes.
-- Root `test` -> passed: Core 184 files / 1781 tests; Studio 58 files / 549 tests; CLI 41 files / 229 tests.
+- Root `build` and `typecheck` -> passed after final runtime changes.
+- Root `test` -> passed: Core 186 files / 1811 tests; Studio 58 files / 549 tests; CLI 41 files / 229 tests.
 - `verify:publish-manifests` -> passed for Core, CLI, and Studio.
-- Focused Core routing/migration/secret/pipeline tests -> 119 passed.
-- Focused Studio server/service-secret tests -> 156 passed.
-- `git diff --check` -> passed; line-ending conversion warnings only.
-- Diff path and credential scans -> no runtime content, pipeline state, Authorization header, bearer token, or complete credential additions.
+- Focused provider/classifier/transport tests -> 4 files / 81 tests passed.
+- Focused Studio server tests -> 146 passed; focused CLI doctor/localization tests -> 18 passed.
+- `git diff --check` -> passed before handoff update; final staged diff check remains part of the commit gate.
+- Safe serialization tests confirm raw bodies, bearer values, complete API keys, and causes are excluded from API/JSON output. Added credential-shaped strings are explicit mock fixtures only.
 
 ## Blockers / Risks
 
-- No PR-01 blocker remains.
-- Cross-backend route execution is intentionally rejected until PR-03; PR-01 only resolves route overrides on the current backend.
-- Existing legacy fields remain during the compatibility window and must not become a second routing implementation.
+- No PR-02 blocker remains.
+- Bare 500s, ordinary 403s, and undocumented errors remain conservatively `unknown`.
+- PR-02 exposes failover eligibility only. Backend selection, retries across candidates, health persistence, and switching must be implemented once in PR-03.
+- Existing Chinese user-facing behavior is retained through safe category messages; raw upstream bodies are intentionally no longer echoed.
 
 ## Next Steps
 
-1. Create the atomic PR-01 commit, fast-forward local `master`, push `origin/master`, and verify the remote SHA.
-2. Mark PR-01 complete in local pipeline state with its commit and validation evidence.
-3. Render PR-02 only, create `feature/model-continuity-pr02` from the verified remote master, and assign a different agent.
+1. Create the atomic PR-02 commit `feat: add structured provider errors`.
+2. Re-fetch `origin`, fast-forward local `master`, push only `origin/master`, and verify the remote SHA.
+3. Mark PR-02 complete in local pipeline state with the commit and validation evidence.
+4. Render PR-03 only, create `feature/model-continuity-pr03` from verified `master`, and assign a third, different implementation agent.
 
 ## Safety Notes
 

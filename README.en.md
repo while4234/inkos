@@ -416,7 +416,7 @@ This generates `story/runtime/chapter-XXXX.intent.md`, `context.json`, `rule-sta
 
 Different agents can use different models and providers. Writer on Claude (stronger creative), Auditor on GPT-4o (cheaper and fast), Radar on a local model (zero cost). `inkos config set-model` configures per-agent; unconfigured agents fall back to the global model.
 
-See [MODEL_ROUTING.md](MODEL_ROUTING.md) for normalized logical models, backend instances, credential references, automatic migration, and recovery.
+See [MODEL_ROUTING.md](MODEL_ROUTING.md) for normalized logical models, backend instances, credential references, automatic migration, and recovery. See [PROVIDER_ERRORS.md](PROVIDER_ERRORS.md) for structured provider errors, cancellation, and safe display boundaries.
 
 ### Daemon Mode + Notifications
 

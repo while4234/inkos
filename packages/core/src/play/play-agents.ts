@@ -9,6 +9,7 @@ import {
   type PlayMutationInput,
 } from "../models/play.js";
 import { appendPromptPackGuidance } from "../skills/prompt-pack.js";
+import { classifyProviderError } from "../llm/provider-error.js";
 
 export interface PlayActionInterpreterInput {
   readonly input: string;
@@ -55,13 +56,14 @@ const PlaySceneRenderSchema = z.object({
 });
 export type PlaySceneRender = z.infer<typeof PlaySceneRenderSchema>;
 
-// A play turn runs three internal LLM calls (interpret → mutate → render). The
-// transport-level retry in the provider does NOT cover HTTP 502/503/429 or
-// "temporarily unavailable", so a single flaky upstream response would break the
-// whole turn. Retry those here, then let each agent fail open.
+// A play turn runs three internal LLM calls (interpret → mutate → render).
+// Preserve its existing bounded retry while delegating classification to the
+// provider error contract, then let each agent fail open.
 function isRetryableLlmError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return /50[0-9]|429|temporarily unavailable|timeout|timed out|socket|terminated|econn|network|fetch failed|bad gateway|service unavailable|rate limit/.test(msg);
+  const providerError = classifyProviderError(err);
+  return providerError.retryable
+    && providerError.onCurrentBackend
+    && !providerError.cancelled;
 }
 
 async function chatWithRetry<T>(call: () => Promise<T>, retries = 2): Promise<T> {

@@ -1,6 +1,7 @@
 import { getEndpoint } from "./index.js";
 import { resolveServiceModelsBaseUrl } from "../service-presets.js";
 import { fetchWithProxy } from "../../utils/proxy-fetch.js";
+import { classifyProviderError, providerErrorFromResponse } from "../provider-error.js";
 
 export interface VerifyResult {
   readonly recommendedTransport?: {
@@ -41,16 +42,18 @@ async function probe(
       signal: AbortSignal.timeout(10_000),
     }, proxyUrl);
     if (!res.ok) {
-      return { ok: false, models: 0, error: `HTTP ${res.status} ${res.statusText}` };
+      const providerError = await providerErrorFromResponse(res);
+      return { ok: false, models: 0, error: providerError.safeMessage };
     }
     const json = (await res.json()) as { data?: Array<{ id: string }> };
     const count = json.data?.length ?? 0;
     return { ok: count > 0, models: count };
   } catch (error) {
+    const providerError = classifyProviderError(error);
     return {
       ok: false,
       models: 0,
-      error: error instanceof Error ? error.message : String(error),
+      error: providerError.safeMessage,
     };
   }
 }
@@ -91,13 +94,14 @@ export async function verifyService(
     await chatCompletion(client, checkModel, [{ role: "user", content: "hi" }], { maxTokens: 10 });
     return { recommendedTransport, probe: probeResult, chat: { ok: true, latencyMs: Date.now() - start } };
   } catch (error) {
+    const providerError = classifyProviderError(error);
     return {
       recommendedTransport,
       probe: probeResult,
       chat: {
         ok: false,
         latencyMs: Date.now() - start,
-        error: error instanceof Error ? error.message : String(error),
+        error: providerError.safeMessage,
       },
     };
   }

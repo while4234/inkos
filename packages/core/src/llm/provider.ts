@@ -16,6 +16,12 @@ import { fetchWithProxy } from "../utils/proxy-fetch.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 import { isLlmStubEnabled, stubChatCompletion } from "../agent/llm-stub.js";
 import { createLeadingThinkTagStripper, stripLeadingThinkBlock } from "./think-tag-stripper.js";
+import {
+  classifyProviderError,
+  providerErrorFromResponse,
+  providerErrorFromResponseBody,
+  type ProviderErrorRouteContext,
+} from "./provider-error.js";
 
 
 // === Streaming Monitor Types ===
@@ -261,10 +267,19 @@ function parseEnvHeaders(): Record<string, string> | undefined {
 
 export class PartialResponseError extends Error {
   readonly partialContent: string;
-  constructor(partialContent: string, cause: unknown) {
-    super(`Stream interrupted after ${partialContent.length} chars: ${String(cause)}`);
+  readonly visibleOutput: boolean;
+  override readonly cause: unknown;
+
+  constructor(
+    partialContent: string,
+    cause: unknown,
+    options: { readonly visibleOutput?: boolean } = {},
+  ) {
+    super(`Stream interrupted after ${partialContent.length} chars`);
     this.name = "PartialResponseError";
     this.partialContent = partialContent;
+    this.visibleOutput = options.visibleOutput ?? false;
+    this.cause = cause;
   }
 }
 
@@ -431,125 +446,9 @@ export function assertWithinContextWindow(params: {
   });
 }
 
-// === Error Wrapping ===
-
-function wrapLLMError(error: unknown, context?: { readonly baseUrl?: string; readonly model?: string; readonly service?: string }): Error {
-  const msg = String(error);
-  const ctxLine = context
-    ? `\n  (baseUrl: ${context.baseUrl}, model: ${context.model})`
-    : "";
-
-  if (msg.includes("400")) {
-    // 抽上游 error body 的 message / reason / code（和下方 5xx 一致），让真实错因浮到用户面前
-    let detail = "";
-    if (error && typeof error === "object") {
-      const err = error as { error?: unknown; body?: unknown; message?: string };
-      const bodyLike = err.error ?? err.body;
-      if (bodyLike && typeof bodyLike === "object") {
-        const b = bodyLike as { reason?: string; message?: string; code?: number | string; type?: string };
-        if (b.message) detail = b.type ? `${b.type}: ${b.message}` : b.message;
-        else if (b.reason) detail = b.reason;
-      }
-    }
-    return new Error(
-      `API 返回 400（请求参数错误）。${detail ? `上游详情：${detail}。\n` : ""}` +
-      `常见原因：\n` +
-      `  1. temperature / max_tokens 超出模型约束（如 Moonshot kimi-k2.X 强制 temperature=1）\n` +
-      `  2. 模型名称不正确或未上架\n` +
-      `  3. 消息格式不兼容（部分服务不支持 system role 或 developer role）${ctxLine}`,
-    );
-  }
-  if (msg.includes("403")) {
-    return new Error(
-      `API 返回 403 (请求被拒绝)。可能原因：\n` +
-      `  1. API Key 无效或过期\n` +
-      `  2. API 提供方的内容审查拦截了请求（公益/免费 API 常见）\n` +
-      `  3. 账户余额不足\n` +
-      `  建议：用 inkos doctor 测试 API 连通性，或换一个不限制内容的 API 提供方${ctxLine}`,
-    );
-  }
-  if (msg.includes("401")) {
-    return new Error(
-      `API 返回 401 (未授权)。请检查 .env 中的 INKOS_LLM_API_KEY 是否正确。${ctxLine}`,
-    );
-  }
-  if (msg.includes("429")) {
-    return new Error(
-      `API 返回 429 (请求过多)。请稍后重试，或检查 API 配额。${ctxLine}`,
-    );
-  }
-  if (
-    msg.includes("Connection error")
-    || msg.includes("ECONNREFUSED")
-    || msg.includes("ENOTFOUND")
-    || msg.includes("fetch failed")
-    || msg.includes("terminated")
-    || msg.includes("UND_ERR_SOCKET")
-    || msg.includes("ECONNRESET")
-    || msg.includes("ETIMEDOUT")
-    || msg.includes("EPIPE")
-  ) {
-    return new Error(
-      `无法连接到 API 服务。可能原因：\n` +
-      `  1. baseUrl 地址不正确（当前：${context?.baseUrl ?? "未知"}）\n` +
-      `  2. 网络不通或被防火墙拦截\n` +
-      `  3. API 服务暂时不可用\n` +
-      `  建议：检查 INKOS_LLM_BASE_URL 是否包含完整路径（如 /v1）`,
-    );
-  }
-  // R4 Bug 2: 5xx "status code (no body)" — 尝试从 OpenAI SDK APIError 里抽 body 给用户看具体原因
-  // （如 PPIO 的 {"code":500,"reason":"MODEL_NOT_AVAILABLE","message":"model not available"}）
-  if (msg.includes("status code") && msg.includes("no body")) {
-    let detail = "";
-    if (error && typeof error === "object") {
-      const err = error as { error?: unknown; body?: unknown; message?: string };
-      const bodyLike = err.error ?? err.body;
-      if (bodyLike && typeof bodyLike === "object") {
-        const b = bodyLike as { reason?: string; message?: string; code?: number | string };
-        if (b.reason) detail = `${b.reason}${b.message ? `: ${b.message}` : ""}`;
-        else if (b.message) detail = b.message;
-      }
-    }
-    return new Error(
-      `API 返回 5xx（上游服务异常）。${detail ? `上游详情：${detail}。` : ""}\n` +
-      `可能原因：\n` +
-      `  1. 模型在 /models 列表但 inference 未上架（如 PPIO 返回 MODEL_NOT_AVAILABLE）\n` +
-      `  2. 服务端临时故障，稍后重试\n` +
-      `  3. 当前 apikey 无权限调用该模型${ctxLine}`,
-    );
-  }
-  return error instanceof Error ? error : new Error(msg);
-}
-
-function collectErrorText(error: unknown, depth = 0): string {
-  if (depth > 4 || error === null || error === undefined) return "";
-  const parts = [String(error)];
-  if (error instanceof Error) {
-    parts.push(error.name, error.message);
-    const cause = (error as Error & { cause?: unknown }).cause;
-    if (cause) parts.push(collectErrorText(cause, depth + 1));
-  } else if (typeof error === "object") {
-    const err = error as { code?: unknown; cause?: unknown; message?: unknown; name?: unknown };
-    if (err.name) parts.push(String(err.name));
-    if (err.message) parts.push(String(err.message));
-    if (err.code) parts.push(String(err.code));
-    if (err.cause) parts.push(collectErrorText(err.cause, depth + 1));
-  }
-  return parts.join("\n");
-}
-
-function isTransientLLMTransportError(error: unknown): boolean {
-  const text = collectErrorText(error);
-  return [
-    "terminated",
-    "UND_ERR_SOCKET",
-    "ECONNRESET",
-    "ETIMEDOUT",
-    "EPIPE",
-    "socket hang up",
-    "other side closed",
-    "network socket disconnected",
-  ].some((needle) => text.includes(needle));
+export function isTransientLLMTransportError(error: unknown): boolean {
+  const classified = classifyProviderError(error);
+  return classified.category === "network" || classified.category === "timeout";
 }
 
 /**
@@ -563,31 +462,13 @@ function isTransientLLMTransportError(error: unknown): boolean {
  * and just delays the real error.
  */
 export function isTransientLLMHttpError(error: unknown): boolean {
-  const text = collectErrorText(error).toLowerCase();
-  if (text.includes("model_not_available") || text.includes("model not available")) {
-    return false;
-  }
-  const statusHit = /\b(429|502|503|504)\b/.test(text);
-  const phraseHit = [
-    "temporarily unavailable",
-    "service unavailable",
-    "bad gateway",
-    "gateway timeout",
-    "too many requests",
-    "rate limit",
-    "overloaded",
-    "please retry",
-    "try again later",
-  ].some((needle) => text.includes(needle));
-  return statusHit || phraseHit;
+  const classified = classifyProviderError(error);
+  return classified.category === "rate_limit" || classified.category === "overloaded";
 }
 
 function isRetryableLLMError(error: unknown): boolean {
-  // PartialResponseError = 流在生成中途被掐断（网关切长连接等）。重试会完整
-  // 重新生成一次，比把半截内容当成功交付（截断的章节/设定文件）要正确。
-  return error instanceof PartialResponseError
-    || isTransientLLMTransportError(error)
-    || isTransientLLMHttpError(error);
+  const classified = classifyProviderError(error);
+  return classified.retryable && classified.onCurrentBackend && !classified.cancelled;
 }
 
 async function withTransientLLMRetry<T>(
@@ -655,6 +536,18 @@ function shouldUseNativeCustomTransport(client: LLMClient): boolean {
   return client.service === "ollama"
     && client.provider === "openai"
     && shouldUseNativeLocalOpenAICompatibleTransport(client);
+}
+
+function resolveProviderErrorContext(
+  client: LLMClient,
+  model: string,
+  context?: ProviderErrorRouteContext,
+): ProviderErrorRouteContext {
+  return {
+    backendId: context?.backendId ?? client.service,
+    logicalModelId: context?.logicalModelId,
+    upstreamModelId: context?.upstreamModelId ?? model,
+  };
 }
 
 function shouldUseNativeLocalOpenAICompatibleTransport(client: LLMClient): boolean {
@@ -762,8 +655,7 @@ function isSystemRoleUnsupportedErrorText(text: string): boolean {
     || normalized.includes("不允许");
 }
 
-async function readErrorResponse(res: Response): Promise<string> {
-  const text = await res.text().catch(() => "");
+function formatErrorResponse(res: Pick<Response, "status" | "statusText">, text: string): string {
   try {
     const json = JSON.parse(text) as { error?: { message?: string } | string; detail?: string };
     if (typeof json.error === "string" && json.error) return `${res.status} ${json.error}`;
@@ -864,9 +756,10 @@ async function chatCompletionViaCustomAnthropicCompatible(
   onStreamProgress?: OnStreamProgress,
   onTextDelta?: (text: string) => void,
   signal?: AbortSignal,
+  routeContext?: ProviderErrorRouteContext,
 ): Promise<LLMResponse> {
   const baseUrl = client._piModel?.baseUrl ?? "";
-  const errorCtx = { baseUrl, model, service: client.service };
+  const errorCtx = resolveProviderErrorContext(client, model, routeContext);
   const extra = stripReservedKeys(resolved.extra);
   const payload: Record<string, unknown> = {
     model,
@@ -895,14 +788,14 @@ async function chatCompletionViaCustomAnthropicCompatible(
   }, client.proxyUrl);
 
   if (!response.ok) {
-    throw wrapLLMError(new Error(await readErrorResponse(response)), errorCtx);
+    throw await providerErrorFromResponse(response, errorCtx);
   }
 
   if (!client.stream) {
     const json = await response.json() as any;
     const content = extractAnthropicContent(json);
     if (!content) {
-      throw wrapLLMError(new Error("LLM returned empty response"), errorCtx);
+      throw classifyProviderError(new Error("LLM returned empty response"), errorCtx);
     }
     return {
       content,
@@ -915,7 +808,7 @@ async function chatCompletionViaCustomAnthropicCompatible(
   }
 
   const reader = response.body?.getReader();
-  if (!reader) throw wrapLLMError(new Error("Streaming body unavailable"), errorCtx);
+  if (!reader) throw classifyProviderError(new Error("Streaming body unavailable"), errorCtx);
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
@@ -955,11 +848,15 @@ async function chatCompletionViaCustomAnthropicCompatible(
   }
 
   if (!content) {
-    throw wrapLLMError(new Error("LLM returned empty response from stream"), errorCtx);
+    throw classifyProviderError(new Error("LLM returned empty response from stream"), errorCtx);
   }
   if (!sawMessageStop) {
     // Anthropic 协议的正常结束必须有 message_stop；没有就是流被中途掐断
-    throw new PartialResponseError(content, new Error("stream closed without message_stop"));
+    throw new PartialResponseError(
+      content,
+      new Error("stream closed without message_stop"),
+      { visibleOutput: Boolean(onTextDelta) },
+    );
   }
   if (!usage.totalTokens) {
     usage.totalTokens = usage.promptTokens + usage.completionTokens;
@@ -976,13 +873,23 @@ async function chatCompletionViaCustomOpenAICompatible(
   onTextDelta?: (text: string) => void,
   signal?: AbortSignal,
   allowSystemRoleFallback = true,
+  routeContext?: ProviderErrorRouteContext,
 ): Promise<LLMResponse> {
   if (client.provider === "anthropic") {
-    return chatCompletionViaCustomAnthropicCompatible(client, model, messages, resolved, onStreamProgress, onTextDelta, signal);
+    return chatCompletionViaCustomAnthropicCompatible(
+      client,
+      model,
+      messages,
+      resolved,
+      onStreamProgress,
+      onTextDelta,
+      signal,
+      routeContext,
+    );
   }
   const baseUrl = client._piModel?.baseUrl ?? "";
   const headers = buildCustomHeaders(client);
-  const errorCtx = { baseUrl, model, service: client.service };
+  const errorCtx = resolveProviderErrorContext(client, model, routeContext);
   const extra = stripReservedKeys(resolved.extra);
 
   if (client.apiFormat === "responses") {
@@ -1005,14 +912,14 @@ async function chatCompletionViaCustomOpenAICompatible(
       signal,
     }, client.proxyUrl);
     if (!response.ok) {
-      throw wrapLLMError(new Error(await readErrorResponse(response)), errorCtx);
+      throw await providerErrorFromResponse(response, errorCtx);
     }
 
     if (!client.stream) {
       const json = await response.json() as any;
       const content = extractResponsesContent(json);
       if (!content) {
-        throw wrapLLMError(new Error("LLM returned empty response"), errorCtx);
+        throw classifyProviderError(new Error("LLM returned empty response"), errorCtx);
       }
       return {
         content,
@@ -1025,7 +932,7 @@ async function chatCompletionViaCustomOpenAICompatible(
     }
 
     const reader = response.body?.getReader();
-    if (!reader) throw wrapLLMError(new Error("Streaming body unavailable"), errorCtx);
+    if (!reader) throw classifyProviderError(new Error("Streaming body unavailable"), errorCtx);
     const decoder = new TextDecoder();
     let buffer = "";
     let content = "";
@@ -1066,11 +973,15 @@ async function chatCompletionViaCustomOpenAICompatible(
     }
 
     if (!content) {
-      throw wrapLLMError(new Error("LLM returned empty response from stream"), errorCtx);
+      throw classifyProviderError(new Error("LLM returned empty response from stream"), errorCtx);
     }
     if (!sawResponseTerminal) {
       // Responses 协议的正常结束必须有 response.completed/incomplete 终止事件
-      throw new PartialResponseError(content, new Error("stream closed without response.completed"));
+      throw new PartialResponseError(
+        content,
+        new Error("stream closed without response.completed"),
+        { visibleOutput: Boolean(onTextDelta) },
+      );
     }
     return { content, usage };
   }
@@ -1100,7 +1011,8 @@ async function chatCompletionViaCustomOpenAICompatible(
     signal,
   }, client.proxyUrl);
   if (!response.ok) {
-    const detail = await readErrorResponse(response);
+    const errorBody = await response.text().catch(() => "");
+    const detail = formatErrorResponse(response, errorBody);
     if (allowSystemRoleFallback && hasSystemMessages(messages) && isSystemRoleUnsupportedErrorText(detail)) {
       return chatCompletionViaCustomOpenAICompatible(
         client,
@@ -1111,9 +1023,10 @@ async function chatCompletionViaCustomOpenAICompatible(
         onTextDelta,
         signal,
         false,
+        routeContext,
       );
     }
-    throw wrapLLMError(new Error(detail), errorCtx);
+    throw providerErrorFromResponseBody(response, errorBody, errorCtx);
   }
 
   if (!client.stream) {
@@ -1122,7 +1035,7 @@ async function chatCompletionViaCustomOpenAICompatible(
     // 剥掉起始处的完整 think 块，防止思考内容混进章节/对话正文（issue #329）。
     const content = stripLeadingThinkBlock(extractChatContent(json));
     if (!content) {
-      throw wrapLLMError(new Error("LLM returned empty response"), errorCtx);
+      throw classifyProviderError(new Error("LLM returned empty response"), errorCtx);
     }
     return {
       content,
@@ -1135,7 +1048,7 @@ async function chatCompletionViaCustomOpenAICompatible(
   }
 
   const reader = response.body?.getReader();
-  if (!reader) throw wrapLLMError(new Error("Streaming body unavailable"), errorCtx);
+  if (!reader) throw classifyProviderError(new Error("Streaming body unavailable"), errorCtx);
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
@@ -1198,10 +1111,14 @@ async function chatCompletionViaCustomOpenAICompatible(
   content += thinkStripper.flush();
   const finalContent = content || reasoningContent;
   if (!finalContent) {
-    throw wrapLLMError(new Error("LLM returned empty response from stream"), errorCtx);
+    throw classifyProviderError(new Error("LLM returned empty response from stream"), errorCtx);
   }
   if (!sawTerminal) {
-    throw new PartialResponseError(finalContent, new Error("stream closed without [DONE]/finish_reason"));
+    throw new PartialResponseError(
+      finalContent,
+      new Error("stream closed without [DONE]/finish_reason"),
+      { visibleOutput: Boolean(onTextDelta) },
+    );
   }
   return { content: finalContent, usage };
 }
@@ -1219,6 +1136,7 @@ export async function chatCompletion(
     readonly onStreamProgress?: OnStreamProgress;
     readonly onTextDelta?: (text: string) => void;
     readonly signal?: AbortSignal;
+    readonly errorContext?: ProviderErrorRouteContext;
     // Diagnostics / connectivity checks want a fast pass-or-fail — set false to
     // skip the transient 502/503/429 retry+backoff (e.g. the doctor probe).
     readonly retry?: boolean;
@@ -1238,7 +1156,7 @@ export async function chatCompletion(
   const onStreamProgress = options?.onStreamProgress;
   const onTextDelta = options?.onTextDelta;
   const signal = options?.signal;
-  const errorCtx = { baseUrl: client._piModel?.baseUrl ?? "(unknown)", model, service: client.service };
+  const errorCtx = resolveProviderErrorContext(client, model, options?.errorContext);
 
   try {
     return await withTransientLLMRetry(
@@ -1251,9 +1169,27 @@ export async function chatCompletion(
           reservedOutputTokens: resolved.maxTokens,
         });
         if (shouldUseNativeCustomTransport(client)) {
-          return chatCompletionViaCustomOpenAICompatible(client, model, messages, resolved, onStreamProgress, onTextDelta, signal);
+          return chatCompletionViaCustomOpenAICompatible(
+            client,
+            model,
+            messages,
+            resolved,
+            onStreamProgress,
+            onTextDelta,
+            signal,
+            true,
+            errorCtx,
+          );
         }
-        return chatCompletionViaPiAi(client, model, messages, resolved, onStreamProgress, onTextDelta, signal);
+        return chatCompletionViaPiAi(
+          client,
+          model,
+          messages,
+          resolved,
+          onStreamProgress,
+          onTextDelta,
+          signal,
+        );
       },
       // Retrying after UI text deltas have been emitted can duplicate visible
       // text; callers can also opt out (e.g. fast-fail diagnostics).
@@ -1263,7 +1199,7 @@ export async function chatCompletion(
     // 注意：中断的流（PartialResponseError）不再"打捞"半截内容当成功返回——
     // 那会产出写到一半就结束的章节/设定文件。重试由 withTransientLLMRetry
     // 负责（完整重新生成）；重试耗尽后如实抛错。
-    throw wrapLLMError(error, errorCtx);
+    throw classifyProviderError(error, { ...errorCtx, signal });
   }
 }
 
@@ -1373,7 +1309,11 @@ async function chatCompletionViaPiAi(
         if (event.type === "error" && msg.errorMessage) {
           const partial = chunks.join("");
           if (partial) {
-            throw new PartialResponseError(partial, new Error(msg.errorMessage));
+            throw new PartialResponseError(
+              partial,
+              new Error(msg.errorMessage),
+              { visibleOutput: Boolean(onTextDelta) },
+            );
           }
           throw new Error(msg.errorMessage);
         }
@@ -1385,7 +1325,11 @@ async function chatCompletionViaPiAi(
     const partial = chunks.join("");
     if (partial) {
       // 带着已收到的部分内容抛 PartialResponseError，让瞬时重试整体重新生成
-      throw new PartialResponseError(partial, streamError);
+      throw new PartialResponseError(
+        partial,
+        streamError,
+        { visibleOutput: Boolean(onTextDelta) },
+      );
     }
     throw streamError;
   } finally {
@@ -1400,7 +1344,11 @@ async function chatCompletionViaPiAi(
   }
   if (!sawDone) {
     // 事件流没有以 done 收尾就结束 = 上游把流掐断了，内容不可信
-    throw new PartialResponseError(content, new Error("stream ended without done event"));
+    throw new PartialResponseError(
+      content,
+      new Error("stream ended without done event"),
+      { visibleOutput: Boolean(onTextDelta) },
+    );
   }
 
   return {

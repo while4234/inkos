@@ -245,6 +245,29 @@ describe("chatCompletion via pi-ai", () => {
     expect(opts.signal).toBe(controller.signal);
   });
 
+  it("does not retry a user cancellation", async () => {
+    const abortedStream: AsyncIterable<Record<string, unknown>> = {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            throw new DOMException("The operation was aborted.", "AbortError");
+          },
+        };
+      },
+    };
+    mockStreamSimple.mockReturnValue(abortedStream);
+
+    const error = await captureError(
+      chatCompletion(makeClient(), "test-model", [{ role: "user", content: "hi" }]),
+    ) as Error & { cancelled?: boolean; retryable?: boolean; failoverEligible?: boolean };
+
+    expect(error.name).toBe("ProviderCancellationError");
+    expect(error.cancelled).toBe(true);
+    expect(error.retryable).toBe(false);
+    expect(error.failoverEligible).toBe(false);
+    expect(mockStreamSimple).toHaveBeenCalledOnce();
+  });
+
   it("drops non-ByteString headers before calling pi-ai", async () => {
     mockStreamSimple.mockReturnValue(makeTextStream("ok"));
 
@@ -1049,6 +1072,24 @@ describe("stream interruption detection", () => {
       .rejects.toThrow(/Stream interrupted|completion signal/);
     // 初次 + TRANSIENT_LLM_RETRIES(2) 次重试
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    vi.unstubAllGlobals();
+  });
+
+  it("marks a truncated stream visible only after the caller receives text deltas", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse(TRUNCATED_SSE));
+    vi.stubGlobal("fetch", fetchMock);
+    const visibleDeltas: string[] = [];
+
+    const error = await captureError(chatCompletion(
+      nativeStreamClient(),
+      "glm-compat",
+      [{ role: "user", content: "写第1章" }],
+      { onTextDelta: (text) => visibleDeltas.push(text) },
+    )) as Error & { visibleOutput?: boolean };
+
+    expect(visibleDeltas.join("")).toBe("写到一半的正文");
+    expect(error.visibleOutput).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
   });
 

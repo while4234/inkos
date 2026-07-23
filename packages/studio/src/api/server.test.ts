@@ -272,6 +272,10 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     inferLanguage: actual.inferLanguage,
     isUsablePlayInitialScene: actual.isUsablePlayInitialScene,
     chatCompletion: chatCompletionMock,
+    ProviderError: actual.ProviderError,
+    classifyProviderError: actual.classifyProviderError,
+    providerErrorFromResponse: actual.providerErrorFromResponse,
+    toSafeProviderErrorDetails: actual.toSafeProviderErrorDetails,
     loadProjectConfig: loadProjectConfigMock,
     processProjectInteractionRequest: processProjectInteractionRequestMock,
     createInteractionToolsFromDeps: createInteractionToolsFromDepsMock,
@@ -5139,9 +5143,9 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(response.json()).resolves.toEqual({
       error: {
         code: "AGENT_LLM_ERROR",
-        message: upstreamError,
+        message: "API 返回 400（请求参数或格式不兼容），请检查 temperature / max_tokens、模型名称与消息格式。",
       },
-      response: upstreamError,
+      response: "API 返回 400（请求参数或格式不兼容），请检查 temperature / max_tokens、模型名称与消息格式。",
     });
     expect(chatCompletionMock).not.toHaveBeenCalled();
   });
@@ -6011,10 +6015,11 @@ describe("createStudioServer daemon lifecycle", () => {
       body: {
       error: {
         code: "TRANSLATION_RUN_FAILED",
-        message: expect.stringContaining("503 The model provider is temporarily unavailable."),
+        message: expect.stringContaining("API 返回 503"),
       },
       },
     });
+    expect(JSON.stringify(body)).not.toContain("The model provider is temporarily unavailable.");
   });
 
   it("returns translated chapter text in translation detail for in-page review", async () => {

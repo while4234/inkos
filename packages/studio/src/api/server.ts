@@ -39,6 +39,10 @@ import {
   probeModelsFromUpstream,
   fetchWithProxy,
   chatCompletion,
+  ProviderError,
+  classifyProviderError,
+  providerErrorFromResponse,
+  toSafeProviderErrorDetails,
   buildExportArtifact,
   evaluateBookQuality,
   ConsolidatorAgent,
@@ -1204,11 +1208,17 @@ function validateAgentActionExecution(args: {
 
 type AgentFailureKind = "busy" | "llm" | "internal" | "unknown";
 
-function classifyAgentFailure(message: string): AgentFailureKind {
-  const text = message.trim();
+function classifyAgentFailure(error: unknown): AgentFailureKind {
+  const text = error instanceof Error ? error.message.trim() : String(error).trim();
   if (!text) return "unknown";
   if (/BookWriteLockError|locked by an active InkOS write|BOOK_BUSY/i.test(text)) {
     return "busy";
+  }
+  const providerError = classifyProviderError(
+    typeof error === "string" ? new Error(error) : error,
+  );
+  if (error instanceof ProviderError || providerError.category !== "unknown") {
+    return "llm";
   }
   if (
     /API\s*返回|上游|upstream|Bad Gateway|temporarily unavailable|rate limit|quota|API Key|unauthorized|forbidden|无法连接到 API|fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|LLM returned empty response|Provider finish_reason|reasoning_content/i.test(text)
@@ -1224,10 +1234,17 @@ function classifyAgentFailure(message: string): AgentFailureKind {
 }
 
 function formatAgentFailure(
-  message: string,
+  error: unknown,
   lang: StudioLanguage = "zh",
 ): { readonly code: string; readonly message: string; readonly status: 409 | 500 | 502 } {
-  const kind = classifyAgentFailure(message);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const providerError = classifyProviderError(
+    typeof error === "string" ? new Error(error) : error,
+  );
+  const message = error instanceof ProviderError || providerError.category !== "unknown"
+    ? providerError.safeMessage
+    : rawMessage;
+  const kind = classifyAgentFailure(error);
   if (kind === "busy") {
     return { code: "BOOK_BUSY", message, status: 409 };
   }
@@ -1245,13 +1262,13 @@ function formatAgentFailure(
 }
 
 function formatAgentActionFailure(
-  message: string,
+  error: unknown,
   lang: StudioLanguage,
 ): { readonly code: string; readonly message: string; readonly status: 409 | 502 } {
-  const failure = formatAgentFailure(message, lang);
+  const failure = formatAgentFailure(error, lang);
   return failure.code === "BOOK_BUSY"
     ? { code: failure.code, message: failure.message, status: 409 }
-    : { code: "AGENT_ACTION_FAILED", message, status: 502 };
+    : { code: "AGENT_ACTION_FAILED", message: failure.message, status: 502 };
 }
 
 interface CollectedToolExec {
@@ -2438,15 +2455,11 @@ async function fetchModelsFromServiceBaseUrl(
       signal: AbortSignal.timeout(SERVICE_MODELS_PROBE_TIMEOUT_MS),
     }, proxyUrl);
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
+      const providerError = await providerErrorFromResponse(res);
       return {
         models: [],
-        error: pick(
-          lang,
-          `服务商返回 ${res.status}: ${body.slice(0, 200)}`,
-          `Service returned ${res.status}: ${body.slice(0, 200)}`,
-        ),
-        authFailed: res.status === 401 || res.status === 403,
+        error: providerError.safeMessage,
+        authFailed: providerError.category === "auth",
       };
     }
     const json = await res.json() as { data?: Array<{ id: string }> };
@@ -2454,9 +2467,10 @@ async function fetchModelsFromServiceBaseUrl(
       models: (json.data ?? []).map((m) => ({ id: m.id, name: m.id })),
     };
   } catch (error) {
+    const providerError = classifyProviderError(error);
     return {
       models: [],
-      error: error instanceof Error ? error.message : String(error),
+      error: providerError.safeMessage,
     };
   }
 }
@@ -2765,6 +2779,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.onError((error, c) => {
     if (error instanceof ApiError) {
       return c.json({ error: { code: error.code, message: error.message } }, error.status as 400);
+    }
+    if (error instanceof ProviderError) {
+      const details = toSafeProviderErrorDetails(error);
+      console.error("[studio] Unexpected provider error", details);
+      return c.json({
+        error: {
+          code: "PROVIDER_ERROR",
+          message: error.safeMessage,
+          details,
+        },
+      }, 502);
     }
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("LLM API key not set") || message.includes("INKOS_LLM_API_KEY not set")) {
@@ -4898,8 +4923,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             },
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const failure = formatAgentActionFailure(message, surfaceLanguage);
+          const failure = formatAgentActionFailure(error, surfaceLanguage);
+          const message = failure.message;
           if (pendingBookId) {
             bookCreateStatus.set(pendingBookId, { status: "error", error: message });
             broadcast("book:error", { bookId: pendingBookId, sessionId: streamSessionId, error: message });
@@ -5196,7 +5221,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         const migratedMessage = e instanceof Error ? e.message : String(e);
         throw new ApiError(409, "SESSION_ALREADY_MIGRATED", migratedMessage);
       }
-      const msg = e instanceof Error ? e.message : String(e);
+      const failure = formatAgentFailure(e, language);
+      const msg = failure.message;
       broadcast("agent:error", { instruction, activeBookId, sessionId, sessionKind: reqSessionKind, error: msg });
 
       // Agent busy — return 429 with user-friendly message
@@ -5214,7 +5240,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         }, 429);
       }
 
-      const failure = formatAgentFailure(msg, language);
       return c.json(
         { error: { code: failure.code, message: failure.message } },
         failure.status,
@@ -6314,10 +6339,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       return c.json(result);
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      const isUpstream = /API|LLM|provider|upstream|temporarily unavailable|rate limit|quota|fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|503|502|504/i.test(message);
+      const classified = classifyProviderError(error);
+      const providerError = error instanceof ProviderError || classified.category !== "unknown"
+        ? classified
+        : undefined;
+      const message = providerError?.safeMessage
+        ?? (error instanceof Error ? error.message : String(error));
       throw new ApiError(
-        isUpstream ? 502 : 500,
+        providerError ? 502 : 500,
         "TRANSLATION_RUN_FAILED",
         message || "Translation run failed.",
       );

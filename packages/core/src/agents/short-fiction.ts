@@ -1,5 +1,6 @@
 import { BaseAgent } from "./base.js";
 import { countChapterLength, resolveLengthCountingMode } from "../utils/length-metrics.js";
+import { classifyProviderError } from "../llm/provider-error.js";
 import {
   type ShortFictionLanguage,
   buildShortFictionDraftReviewSystemPrompt,
@@ -517,17 +518,18 @@ async function retryShortFictionCall<T>(
     } catch (e) {
       lastError = e;
       if (attempt >= 2 || !isTransientShortFictionError(e)) throw e;
-      logger?.warn(`[${label}] transient LLM interruption, retrying once: ${String(e)}`);
+      const providerError = classifyProviderError(e);
+      logger?.warn(
+        `[${label}] transient LLM interruption (${providerError.category}), retrying once: ${providerError.safeMessage}`,
+      );
     }
   }
   throw lastError;
 }
 
 function isTransientShortFictionError(error: unknown): boolean {
-  const message = String(error).toLowerCase();
-  return message.includes("unexpected eof")
-    || message.includes("econnreset")
-    || message.includes("socket hang up")
-    || message.includes("terminated")
-    || message.includes("fetch failed");
+  const providerError = classifyProviderError(error);
+  return providerError.retryable
+    && providerError.onCurrentBackend
+    && !providerError.cancelled;
 }

@@ -11,8 +11,9 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 ## Current Baseline
 
 - Upstream baseline: `1a2fd09b50681f764081675feebd02a9657f973b` (`upstream/master`)
-- Personal baseline: documentation commit pending
-- Working tree: initialization changes in progress
+- Personal initialization commit: `6b72785a798441f3a84aba1613a8157016247f5f` (`origin/master`)
+- `upstream-sync`: `1a2fd09b50681f764081675feebd02a9657f973b`, exactly matching `upstream/master`
+- Working tree: clean after the initialization push
 - Validation:
   - pnpm 9.15.9 frozen install -> passed
   - build -> passed
@@ -23,11 +24,12 @@ Runtime content, LLM credentials, environment files, private keys, build output,
   - CLI tests -> 40 files passed; 1 file has one upstream localhost `doctor` test timing out after 10 seconds, while the other 228 tests passed
   - setup launcher -> passed
   - Studio smoke test -> HTTP 200 and visible UI at `http://127.0.0.1:4567`
+  - GitHub Actions run `30004983154` -> passed on Windows and Linux with Node 20, 22, and 24; `verify-pack` also passed
 
 ## Change Log
 
 - 2026-07-23 `1a2fd09b` imported: exact upstream `master` baseline plus 38 release tags; `upstream-sync` created at the same commit.
-- 2026-07-23 pending: added repository attribution, durable update semantics, local setup/start launchers, and validation records.
+- 2026-07-23 `6b72785a` added: repository attribution, durable update semantics, local setup/start launchers, and validation records.
 
 ## Rollback Notes
 

@@ -35,6 +35,7 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - 2026-07-24 PR-03 acceptance completed: added route-aware API-key failover, bounded per-backend retries, persistent backend health, safe aggregate attempts, routing events, PipelineRunner/short-fiction integration, and legacy override compatibility. Full pnpm 9.15.9 build/typecheck/test/publish-manifest validation passed (Core 1829, Studio 549, CLI 229 tests).
 - 2026-07-24 PR-04 acceptance completed: added explicit model-family routing, three auditable model-adaptation prompt assets, revision-safe/idempotent final-boundary injection, retry/failover metadata, probe opt-out, and a reusable Grok history transform. Full pnpm 9.15.9 frozen install/build/typecheck/test/publish-manifest validation passed (Core 191 files / 1859 tests after the final acceptance fixes; Studio and CLI suites passed).
 - 2026-07-24 PR-05 acceptance completed: added modular Studio credential/backend/route/health APIs, revision-protected normalized graph updates, masked secret status with explicit replace/keep/clear semantics, production routing SSE/task summaries, and the `#/model-routing` management UI. A repository-external browser smoke covered Chinese/English, route creation, health probing, keyboard focus, 375px layout, and secret absence from the DOM. Full pnpm 9.15.9 frozen install/build/typecheck/test/publish-manifest validation passed (Core 191 files / 1859 tests, Studio 63 files / 565 tests, CLI 41 files / 229 tests).
+- 2026-07-24 PR-06 acceptance completed locally: added safe Codex auth discovery/import, path-safe and cross-process-serialized user credential storage, coordinated refresh (including non-rotating token single-flight), Codex Responses/SSE transport, structured same-backend auth retry and route failover, and Studio import/status/re-import/delete management. A repository-external browser smoke covered isolated discovery/import, backend creation, Chinese/English copy, 375px layout, console health, and DOM secret/path absence. Full pnpm 9.15.9 frozen install/build/typecheck/test/publish-manifest validation passed (Core 193 files / 1875 tests, Studio 63 files / 567 tests, CLI 41 files / 229 tests).
 
 ## Model Continuity Pipeline
 
@@ -60,6 +61,10 @@ Runtime content, LLM credentials, environment files, private keys, build output,
 - PR-05 planned commit subject: `feat: add studio routing management`.
 - PR-05 security review: credential GETs return only configured state and a short mask; API keys never enter routing config, browser rehydration, routing events, task summaries, logs, snapshots, or browser artifacts. Test keys use explicit non-production fixture values.
 - PR-05 scope boundary: API Key/OpenAI-compatible backends are fully managed. Codex/Grok connection flows remain PR-06/07, Studio Agent stream failover remains PR-08, and unified usage/cost trace remains PR-09.
+- PR-06 branch: `feature/model-continuity-pr06`.
+- PR-06 planned commit subject: `feat: add codex credential transport`.
+- PR-06 security review: project routing data stores only credential references; managed Codex auth copies and refresh state stay in the user-level credential directory. Studio status/discovery expose only bounded IDs, safe basenames, masked account metadata, expiry, and state. All auth/Responses fixtures are synthetic.
+- PR-06 scope boundary: credentials are imported from existing Codex CLI auth rather than created through browser OAuth. Grok OAuth, Studio Agent streaming, unified trace/cost, and real provider integration remain outside this PR.
 
 ## Rollback Notes
 

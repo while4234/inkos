@@ -155,6 +155,30 @@ export interface CredentialStatusDTO {
   readonly configured: boolean;
   readonly maskedHint: string | null;
   readonly source: "project_secret" | "user_credential" | "not_configured";
+  readonly codex?: CodexCredentialStatusDTO;
+}
+
+export interface CodexCredentialStatusDTO {
+  readonly source: "managed_copy" | "external_reference";
+  readonly safeFileName: string;
+  readonly accountHint: string | null;
+  readonly expiresAt: string | null;
+  readonly nearExpiry: boolean;
+  readonly needsReimport: boolean;
+  readonly lastRefresh: "never" | "succeeded" | "failed";
+}
+
+export interface CodexDiscoveryCandidateDTO {
+  readonly candidateId: string;
+  readonly sources: ReadonlyArray<
+    "CODEX_AUTH_FILE" | "CODEX_HOME" | "project" | "user_home"
+  >;
+  readonly safeFileName: string;
+  readonly state: "available" | "missing" | "unreadable" | "invalid" | "permission_denied";
+  readonly accountHint: string | null;
+  readonly expiresAt: string | null;
+  readonly nearExpiry: boolean;
+  readonly message: string;
 }
 
 export interface BackendInstanceDTO {

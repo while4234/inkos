@@ -54,6 +54,11 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     get isRunning(): boolean { return false; }
   }
 
+  class MockCodexCredentialStore {
+    async list() { return []; }
+    async getStatus() { return undefined; }
+  }
+
   // Real isNewLayoutBook — needs filesystem access for per-book detection
   async function isNewLayoutBook(bookDir: string): Promise<boolean> {
     const { access: accessFs } = await import("node:fs/promises");
@@ -70,6 +75,12 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     StateManager: MockStateManager,
     PipelineRunner: MockPipelineRunner,
     Scheduler: MockScheduler,
+    CodexCredentialStore: MockCodexCredentialStore,
+    CodexCredentialError: actual.CodexCredentialError,
+    discoverCodexAuthCandidates: vi.fn(async () => []),
+    importDiscoveredCodexAuth: vi.fn(async () => {
+      throw new Error("not implemented");
+    }),
     isNewLayoutBook,
     // Real frontmatter parser — the truth GET uses it to split YAML frontmatter
     // from prose body. It is a pure function, so reuse the real implementation.

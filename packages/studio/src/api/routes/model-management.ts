@@ -1,3 +1,4 @@
+import { CodexCredentialStore } from "@actalk/inkos-core";
 import type { Hono } from "hono";
 import { registerModelAuthRoutes } from "./model-auth.js";
 import { registerModelBackendRoutes } from "./model-backends.js";
@@ -14,15 +15,21 @@ export interface ModelManagementRegistration {
   readonly activity: StudioRoutingActivity;
 }
 
+export interface ModelManagementRouteOptions
+  extends Partial<Omit<ModelHealthRouteOptions, "activity">> {
+  readonly codexStore?: CodexCredentialStore;
+}
+
 export function registerModelManagementRoutes(
   app: Hono,
   projectRoot: string,
-  options: Partial<Omit<ModelHealthRouteOptions, "activity">> = {},
+  options: ModelManagementRouteOptions = {},
 ): ModelManagementRegistration {
   const store = new ModelManagementStore(projectRoot);
+  const codexStore = options.codexStore ?? new CodexCredentialStore();
   const activity = new StudioRoutingActivity();
-  registerModelAuthRoutes(app, store);
-  registerModelBackendRoutes(app, store);
+  registerModelAuthRoutes(app, store, codexStore);
+  registerModelBackendRoutes(app, store, codexStore);
   registerModelRouteRoutes(app, store);
   registerModelHealthRoutes(app, store, { ...options, activity });
   return { store, activity };

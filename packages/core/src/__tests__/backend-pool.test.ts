@@ -46,7 +46,7 @@ describe("BackendPool", () => {
       { backendId: "backend-disabled", reason: "disabled" },
       { backendId: "backend-health", reason: "health_unavailable" },
       { backendId: "backend-model", reason: "model_unsupported" },
-      { backendId: "backend-codex", reason: "unsupported_credential_kind" },
+      { backendId: "backend-codex", reason: "credential_unavailable" },
       { backendId: "backend-missing-credential", reason: "credential_unavailable" },
       { backendId: "backend-ready", reason: "duplicate_backend" },
       { backendId: "backend-not-configured", reason: "missing_backend" },

@@ -1,6 +1,7 @@
 import type {
   BackendHealthFile,
   BackendInstance,
+  CodexCredentialStatus,
   CredentialMetadata,
   LogicalModelRoute,
   ModelRoutingConfig,
@@ -24,6 +25,7 @@ export function maskCredential(apiKey: string): string {
 export function credentialStatusDTO(
   credential: CredentialMetadata,
   secrets: SecretsFile,
+  codexStatus?: CodexCredentialStatus,
 ): CredentialStatusDTO {
   const apiKey = credential.kind === "api_key"
     ? secrets.credentials?.[credential.id]?.apiKey
@@ -33,13 +35,26 @@ export function credentialStatusDTO(
     kind: credential.kind,
     label: credential.label,
     scope: credential.scope,
-    configured: Boolean(apiKey),
-    maskedHint: apiKey ? maskCredential(apiKey) : null,
+    configured: Boolean(apiKey || codexStatus),
+    maskedHint: apiKey ? maskCredential(apiKey) : codexStatus?.accountHint ?? null,
     source: apiKey
       ? "project_secret"
       : credential.kind === "api_key"
         ? "not_configured"
-        : "user_credential",
+        : codexStatus ? "user_credential" : "not_configured",
+    ...(codexStatus
+      ? {
+          codex: {
+            source: codexStatus.source,
+            safeFileName: codexStatus.safeFileName,
+            accountHint: codexStatus.accountHint,
+            expiresAt: codexStatus.expiresAt,
+            nearExpiry: codexStatus.nearExpiry,
+            needsReimport: codexStatus.needsReimport,
+            lastRefresh: codexStatus.lastRefresh,
+          },
+        }
+      : {}),
   };
 }
 
@@ -47,6 +62,7 @@ export function backendInstanceDTO(
   backend: BackendInstance,
   credential: CredentialMetadata,
   secrets: SecretsFile,
+  codexStatus?: CodexCredentialStatus,
 ): BackendInstanceDTO {
   return {
     id: backend.id,
@@ -54,7 +70,7 @@ export function backendInstanceDTO(
     service: backend.service,
     provider: backend.provider,
     baseUrl: backend.baseUrl,
-    credential: credentialStatusDTO(credential, secrets),
+    credential: credentialStatusDTO(credential, secrets, codexStatus),
     enabled: backend.enabled,
     transport: backend.transport,
   };

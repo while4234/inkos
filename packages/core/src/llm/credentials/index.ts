@@ -1,16 +1,27 @@
 import type { CredentialKind, CredentialRef } from "../model-routing.js";
 import { loadSecrets } from "../secrets.js";
+import {
+  CodexAuthCredentialProvider,
+  CodexCredentialStore,
+  type ResolvedCodexCredential,
+} from "./codex-auth.js";
 
 export interface ResolvedApiKeyCredential {
   readonly kind: "api_key";
   readonly apiKey: string;
 }
 
-export type ResolvedCredential = ResolvedApiKeyCredential;
+export type ResolvedCredential =
+  | ResolvedApiKeyCredential
+  | ResolvedCodexCredential;
+
+export interface CredentialResolveOptions {
+  readonly signal?: AbortSignal;
+}
 
 export interface CredentialProvider<T extends ResolvedCredential = ResolvedCredential> {
   readonly kind: CredentialKind;
-  resolve(ref: CredentialRef): Promise<T>;
+  resolve(ref: CredentialRef, options?: CredentialResolveOptions): Promise<T>;
 }
 
 export class ProjectApiKeyCredentialProvider implements CredentialProvider<ResolvedApiKeyCredential> {
@@ -39,17 +50,26 @@ export class CredentialResolver {
     providers.forEach((provider) => this.providers.set(provider.kind, provider));
   }
 
-  public async resolve(ref: CredentialRef): Promise<ResolvedCredential> {
+  public async resolve(
+    ref: CredentialRef,
+    options?: CredentialResolveOptions,
+  ): Promise<ResolvedCredential> {
     const provider = this.providers.get(ref.kind);
     if (!provider) {
       throw new Error(`Credential kind "${ref.kind}" is not supported by this InkOS installation.`);
     }
-    return provider.resolve(ref);
+    return provider.resolve(ref, options);
   }
 }
 
-export function createProjectCredentialResolver(projectRoot: string): CredentialResolver {
+export function createProjectCredentialResolver(
+  projectRoot: string,
+  options: { readonly codexStore?: CodexCredentialStore } = {},
+): CredentialResolver {
   return new CredentialResolver([
     new ProjectApiKeyCredentialProvider(projectRoot),
+    new CodexAuthCredentialProvider(options.codexStore ?? new CodexCredentialStore()),
   ]);
 }
+
+export * from "./codex-auth.js";

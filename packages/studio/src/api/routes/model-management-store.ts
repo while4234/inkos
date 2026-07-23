@@ -107,6 +107,69 @@ export class ModelManagementStore {
     });
   }
 
+  public async createBackendWithExistingCredential(
+    expectedRevision: string | undefined,
+    backendValue: unknown,
+  ): Promise<ProjectRoutingDocument> {
+    const backend = BackendInstanceSchema.parse(backendValue);
+    return this.updateRouting(expectedRevision, (routing) => {
+      if (routing.backends.some((item) => item.id === backend.id)) {
+        throw new ApiError(409, "MODEL_BACKEND_DUPLICATE_ID", `Backend "${backend.id}" already exists.`);
+      }
+      const credential = routing.credentials.find((item) => item.id === backend.credentialRef.id);
+      if (!credential || credential.kind !== backend.credentialRef.kind) {
+        throw new ApiError(
+          404,
+          "MODEL_CREDENTIAL_NOT_FOUND",
+          `Credential "${backend.credentialRef.id}" was not found.`,
+        );
+      }
+      routing.backends.push(backend);
+    });
+  }
+
+  public async addUserCredential(
+    expectedRevision: string | undefined,
+    credentialValue: unknown,
+  ): Promise<ProjectRoutingDocument> {
+    const credential = CredentialMetadataSchema.parse(credentialValue);
+    if (credential.scope !== "user" || credential.kind === "api_key") {
+      throw new ApiError(
+        400,
+        "MODEL_CREDENTIAL_SCOPE_INVALID",
+        "Imported login credentials must use a user scope and a non-API-key kind.",
+      );
+    }
+    return this.updateRouting(expectedRevision, (routing) => {
+      if (routing.credentials.some((item) => item.id === credential.id)) {
+        throw new ApiError(409, "MODEL_CREDENTIAL_DUPLICATE_ID", `Credential "${credential.id}" already exists.`);
+      }
+      routing.credentials.push(credential);
+    });
+  }
+
+  public async removeUserCredential(
+    expectedRevision: string | undefined,
+    credentialId: string,
+  ): Promise<ProjectRoutingDocument> {
+    return this.updateRouting(expectedRevision, (routing) => {
+      const credential = routing.credentials.find((item) => item.id === credentialId);
+      if (!credential) {
+        throw new ApiError(404, "MODEL_CREDENTIAL_NOT_FOUND", `Credential "${credentialId}" was not found.`);
+      }
+      const referencedBy = routing.backends.filter((backend) =>
+        backend.credentialRef.id === credentialId);
+      if (referencedBy.length > 0) {
+        throw new ApiError(
+          409,
+          "MODEL_CREDENTIAL_IN_USE",
+          `Credential "${credentialId}" is used by backend(s): ${referencedBy.map((backend) => backend.id).join(", ")}.`,
+        );
+      }
+      routing.credentials = routing.credentials.filter((item) => item.id !== credentialId);
+    });
+  }
+
   public async deleteBackend(
     expectedRevision: string | undefined,
     backendId: string,
@@ -132,8 +195,12 @@ export class ModelManagementStore {
 
       const [removed] = routing.backends.splice(index, 1);
       const credentialId = removed?.credentialRef.id;
+      const removedCredential = credentialId
+        ? routing.credentials.find((credential) => credential.id === credentialId)
+        : undefined;
       const removeCredential = Boolean(
         credentialId
+        && removedCredential?.kind === "api_key"
         && !routing.backends.some((backend) => backend.credentialRef.id === credentialId),
       );
       if (removeCredential) {
@@ -194,6 +261,9 @@ export class ModelManagementStore {
       const { routing } = await this.readUnlocked();
       const credential = routing.credentials.find((item) => item.id === credentialId);
       if (!credential) throw new ApiError(404, "MODEL_CREDENTIAL_NOT_FOUND", `Credential "${credentialId}" was not found.`);
+      if (credential.kind !== "api_key") {
+        throw new ApiError(409, "MODEL_CREDENTIAL_KIND_UNSUPPORTED", "Only API Key credentials can be cleared with this endpoint.");
+      }
       const secrets = await this.readSecretsUnlocked();
       const legacyServiceId = secrets.credentials?.[credentialId]?.legacyServiceId;
       if (secrets.credentials) delete secrets.credentials[credentialId];

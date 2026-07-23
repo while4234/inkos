@@ -258,10 +258,24 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     }
   }
 
+  class MockCodexCredentialStore {
+    async list() { return []; }
+    async getStatus() { return undefined; }
+    async importBytes() { throw new Error("not implemented"); }
+    async replaceBytes() { throw new Error("not implemented"); }
+    async delete() { return false; }
+  }
+
   return {
     StateManager: MockStateManager,
     PipelineRunner: MockPipelineRunner,
     Scheduler: MockScheduler,
+    CodexCredentialStore: MockCodexCredentialStore,
+    CodexCredentialError: actual.CodexCredentialError,
+    discoverCodexAuthCandidates: vi.fn(async () => []),
+    importDiscoveredCodexAuth: vi.fn(async () => {
+      throw new Error("not implemented");
+    }),
     createLLMClient: createLLMClientMock,
     createLogger: vi.fn(() => logger),
     evaluateBookQuality: evaluateBookQualityMock,

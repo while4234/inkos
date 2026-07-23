@@ -1,6 +1,6 @@
 import type { BackendHealthFile, BackendHealthStore } from "./backend-health-store.js";
 import { isBackendAvailable } from "./backend-health-store.js";
-import type { CredentialResolver, ResolvedApiKeyCredential } from "./credentials/index.js";
+import type { CredentialResolver, ResolvedCredential } from "./credentials/index.js";
 import type {
   BackendInstance,
   LogicalModelCandidate,
@@ -28,7 +28,7 @@ export interface SkippedBackendCandidate {
 export interface ResolvedBackendCandidate {
   readonly backend: BackendInstance;
   readonly candidate: LogicalModelCandidate;
-  readonly credential: ResolvedApiKeyCredential;
+  readonly credential: ResolvedCredential;
 }
 
 export interface BackendPoolResolution {
@@ -63,6 +63,7 @@ export class BackendPool {
   public async resolve(
     routeId: string,
     attemptedBackendIds: ReadonlySet<string> = new Set(),
+    signal?: AbortSignal,
   ): Promise<BackendPoolResolution> {
     const route = resolveLogicalModelRoute(this.routing, routeId);
     const health = await this.healthStore.read();
@@ -91,23 +92,16 @@ export class BackendPool {
       }
 
       try {
-        const credential = await this.credentials.resolve(backend!.credentialRef);
-        if (credential.kind !== "api_key") {
-          skipped.push({
-            backendId: candidate.backendId,
-            upstreamModelId: candidate.upstreamModelId,
-            reason: "unsupported_credential_kind",
-          });
-          continue;
-        }
+        const credential = await this.credentials.resolve(
+          backend!.credentialRef,
+          { signal },
+        );
         candidates.push({ backend: backend!, candidate, credential });
       } catch {
         skipped.push({
           backendId: candidate.backendId,
           upstreamModelId: candidate.upstreamModelId,
-          reason: backend!.credentialRef.kind === "api_key"
-            ? "credential_unavailable"
-            : "unsupported_credential_kind",
+          reason: "credential_unavailable",
         });
       }
     }
@@ -129,7 +123,7 @@ export class BackendPool {
     if (!isBackendAvailable(health.backends[backend.id], this.now())) {
       return "health_unavailable";
     }
-    if (backend.credentialRef.kind !== "api_key") {
+    if (backend.credentialRef.kind !== "api_key" && backend.credentialRef.kind !== "codex") {
       return "unsupported_credential_kind";
     }
     if (!await this.supportsModel(backend, candidate.upstreamModelId)) {

@@ -5,15 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FileBackendHealthStore } from "../llm/backend-health-store.js";
-import { CredentialResolver } from "../llm/credentials/index.js";
+import {
+  CredentialResolver,
+  type ResolvedCodexCredential,
+} from "../llm/credentials/index.js";
 import type { ModelRoutingConfig } from "../llm/model-routing.js";
 import type { PromptFamily } from "../llm/model-routing.js";
 import {
   MODEL_GLOBAL_PROMPT_ASSETS,
+  applyModelGlobalPromptToLLMMessages,
   countModelGlobalPromptMarkers,
 } from "../llm/model-global-prompt.js";
 import { classifyProviderError, ProviderError } from "../llm/provider-error.js";
 import { chatCompletion, type LLMClient } from "../llm/provider.js";
+import { requestCodexResponses } from "../llm/codex-responses-transport.js";
 import {
   ResilientChatRuntime,
   RouteExhaustedError,
@@ -406,6 +411,154 @@ describe("ResilientChatRuntime", () => {
 
     expect(seen).toEqual([["immutable"], ["immutable"]]);
     expect(messages).toEqual([{ role: "user", content: "immutable" }]);
+  });
+
+  it("refreshes once on Codex auth failure, retries that backend, then marks auth_required and fails over", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "inkos-codex-route-"));
+    cleanups.push(() => rm(projectRoot, { recursive: true, force: true }));
+    const routing: ModelRoutingConfig = {
+      version: 1,
+      credentials: [
+        { id: "credential-codex", kind: "codex", label: "Codex", scope: "user" },
+        { id: "credential-api", kind: "api_key", label: "API", scope: "project" },
+      ],
+      backends: [
+        {
+          id: "backend-codex",
+          displayName: "Codex",
+          service: "codex",
+          provider: "openai",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          credentialRef: { id: "credential-codex", kind: "codex" },
+          enabled: true,
+          transport: { apiFormat: "responses", stream: true },
+        },
+        {
+          id: "backend-api",
+          displayName: "API",
+          service: "custom",
+          provider: "custom",
+          baseUrl: "https://api.example.test/v1",
+          credentialRef: { id: "credential-api", kind: "api_key" },
+          enabled: true,
+          transport: { apiFormat: "chat", stream: false },
+        },
+      ],
+      routes: [{
+        id: "route-main",
+        displayName: "Main",
+        promptFamily: "gpt",
+        enabled: true,
+        candidates: [
+          { backendId: "backend-codex", upstreamModelId: "gpt-codex" },
+          { backendId: "backend-api", upstreamModelId: "gpt-backup" },
+        ],
+      }],
+      defaultRouteId: "route-main",
+    };
+    let refreshes = 0;
+    let codexRequests = 0;
+    const refreshedCredential: ResolvedCodexCredential = {
+      kind: "codex" as const,
+      accessToken: "runtime-only-refreshed",
+      refresh: async () => {
+        refreshes += 1;
+        return refreshedCredential;
+      },
+    };
+    const credentials = new CredentialResolver([
+      {
+        kind: "codex",
+        resolve: async () => ({
+          kind: "codex",
+          accessToken: "runtime-only",
+          refresh: async () => {
+            refreshes += 1;
+            return refreshedCredential;
+          },
+        }),
+      },
+      {
+        kind: "api_key",
+        resolve: async () => ({ kind: "api_key", apiKey: "runtime-only" }),
+      },
+    ]);
+    const seen = new Map<string, {
+      readonly markerCount: number;
+      readonly revision: string | number | undefined;
+      readonly businessMessage: string | undefined;
+    }>();
+    const events: RoutingEvent[] = [];
+    const runtime = new ResilientChatRuntime({
+      routing,
+      projectRoot,
+      credentials,
+      baseConfig: LLMConfigSchema.parse({
+        provider: "custom",
+        service: "custom",
+        baseUrl: "https://api.example.test/v1",
+        apiKey: "",
+        model: "legacy",
+        routing,
+      }),
+      observer: (event) => {
+        events.push(event);
+      },
+      invoke: async (client, _model, messages, options) => {
+        const applied = applyModelGlobalPromptToLLMMessages(
+          messages,
+          options?._modelGlobalPromptResolution!,
+        ).messages;
+        seen.set(client._routingBackendId!, {
+          markerCount: countModelGlobalPromptMarkers(
+            applied.map((message) => message.content).join("\n"),
+          ),
+          revision: options?._modelGlobalPromptResolution?.revision,
+          businessMessage: applied.find((message) => message.role === "user")?.content,
+        });
+        if (client._routingBackendId === "backend-codex") {
+          return requestCodexResponses({
+            model: "gpt-codex",
+            messages: applied,
+            credential: client._codexCredential!,
+            errorContext: options?.errorContext,
+            fetch: async () => {
+              codexRequests += 1;
+              return new Response("{}", {
+                status: codexRequests === 1 ? 401 : 403,
+              });
+            },
+          });
+        }
+        return {
+          content: "backup",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        };
+      },
+    });
+
+    const response = await runtime.complete(
+      "route-main",
+      [{ role: "user", content: "same business request" }],
+    );
+    expect(response.content).toBe("backup");
+    expect(codexRequests).toBe(2);
+    expect(refreshes).toBe(1);
+    expect(seen.get("backend-codex")).toMatchObject({
+      markerCount: 1,
+      businessMessage: "same business request",
+    });
+    expect(seen.get("backend-api")).toEqual(seen.get("backend-codex"));
+    expect((await runtime.healthStore.read()).backends["backend-codex"]?.status)
+      .toBe("auth_required");
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "backend_switched",
+        fromBackendId: "backend-codex",
+        toBackendId: "backend-api",
+        reason: "auth",
+      }),
+    ]));
   });
 });
 

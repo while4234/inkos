@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import { CodexCredentialStore } from "@actalk/inkos-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../errors.js";
 import { registerModelManagementRoutes } from "./model-management.js";
@@ -41,11 +42,13 @@ function routingFixture() {
 
 describe("model management API", () => {
   let root: string;
+  let codexRoot: string;
   let app: Hono;
   const probe = vi.fn(async () => ({ ok: true, modelCount: 2 }));
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-model-management-"));
+    codexRoot = join(root, "user-credentials");
     await writeFile(join(root, "inkos.json"), JSON.stringify({
       name: "model-management",
       version: "0.1.0",
@@ -74,7 +77,10 @@ describe("model management API", () => {
       }
       throw error;
     });
-    registerModelManagementRoutes(app, root, { probe });
+    registerModelManagementRoutes(app, root, {
+      probe,
+      codexStore: new CodexCredentialStore(codexRoot),
+    });
   });
 
   afterEach(async () => {
@@ -93,6 +99,125 @@ describe("model management API", () => {
       configured: true,
       source: "project_secret",
     });
+  });
+
+  it("does not let existingCredential bypass the Codex credential boundary", async () => {
+    const initial = await json<{ revision: string }>(app, "/api/v1/model-backends");
+    const response = await app.request("http://localhost/api/v1/model-backends", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: initial.revision,
+        existingCredential: true,
+        backend: {
+          id: "backend-bypass",
+          displayName: "Bypass",
+          service: "custom:bypass",
+          provider: "custom",
+          baseUrl: "http://127.0.0.1:41002/v1",
+          credentialRef: { id: "credential-a", kind: "api_key" },
+          enabled: true,
+          transport: { apiFormat: "chat", stream: true },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "MODEL_CREDENTIAL_KIND_UNSUPPORTED" },
+    });
+  });
+
+  it("imports, re-imports, binds, and safely protects a Codex CLI credential", async () => {
+    const initial = await json<{ revision: string }>(app, "/api/v1/model-backends");
+    const imported = await app.request("http://localhost/api/v1/model-auth/codex/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: initial.revision,
+        credentialId: "credential-codex",
+        label: "Codex CLI",
+        fileName: "auth.json",
+        content: codexAuthJson("first"),
+      }),
+    });
+    expect(imported.status).toBe(201);
+    const importedBody = await imported.text();
+    expect(importedBody).not.toContain(codexToken("first"));
+    expect(importedBody).not.toContain(codexToken("refresh-first"));
+    expect(importedBody).not.toContain(codexRoot);
+
+    const auth = await app.request("http://localhost/api/v1/model-auth");
+    const authText = await auth.text();
+    expect(authText).not.toContain(codexToken("first"));
+    expect(authText).not.toContain("Authorization");
+    expect(JSON.parse(authText).credentials).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "credential-codex",
+        kind: "codex",
+        configured: true,
+        source: "user_credential",
+        codex: expect.objectContaining({
+          source: "managed_copy",
+          safeFileName: "auth.json",
+          accountHint: "acco••••5678",
+        }),
+      }),
+    ]));
+
+    const afterImport = await json<{ revision: string }>(app, "/api/v1/model-backends");
+    const backend = await app.request("http://localhost/api/v1/model-backends", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: afterImport.revision,
+        existingCredential: true,
+        backend: {
+          id: "backend-codex",
+          displayName: "Codex",
+          service: "codex",
+          provider: "openai",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          credentialRef: { id: "credential-codex", kind: "codex" },
+          enabled: true,
+          transport: { apiFormat: "responses", stream: true },
+        },
+      }),
+    });
+    expect(backend.status).toBe(201);
+    const backendList = await json<{ backends: Array<{ id: string; credential: { configured: boolean; codex?: { accountHint: string } } }> }>(
+      app,
+      "/api/v1/model-backends",
+    );
+    expect(backendList.backends).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "backend-codex",
+        credential: expect.objectContaining({
+          configured: true,
+          codex: expect.objectContaining({ accountHint: "acco••••5678" }),
+        }),
+      }),
+    ]));
+
+    const reimported = await app.request("http://localhost/api/v1/model-auth/codex/credential-codex", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileName: "new-auth.json", content: codexAuthJson("second") }),
+    });
+    expect(reimported.status).toBe(200);
+    expect(await readFile(join(codexRoot, "auth", "credential-codex.json"), "utf8"))
+      .toContain(codexToken("second"));
+
+    const blocked = await app.request("http://localhost/api/v1/model-auth/codex/credential-codex", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: (await json<{ revision: string }>(app, "/api/v1/model-backends")).revision,
+      }),
+    });
+    expect(blocked.status).toBe(409);
+    expect(await readFile(join(codexRoot, "auth", "credential-codex.json"), "utf8"))
+      .toContain(codexToken("second"));
   });
 
   it("creates a second backend and an ordered two-candidate route with CAS protection", async () => {
@@ -277,4 +402,20 @@ async function json<T>(app: Hono, path: string): Promise<T> {
   const response = await app.request(`http://localhost${path}`);
   expect(response.status).toBe(200);
   return await response.json() as T;
+}
+
+function codexAuthJson(label: string): string {
+  return JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: codexToken(label),
+      refresh_token: codexToken(`refresh-${label}`),
+      account_id: "account-studio-12345678",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    },
+  });
+}
+
+function codexToken(label: string): string {
+  return ["fixture", "codex", label, "credential"].join("-");
 }

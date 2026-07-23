@@ -7,8 +7,9 @@ InkOS keeps three concerns separate:
 - A **backend instance** describes a concrete provider endpoint and transport.
   It references a credential by ID and never embeds a secret.
 - A **credential reference** is non-secret metadata. Project API keys live in
-  `.inkos/secrets.json`; future Codex and Grok credentials live under the
-  user-level `~/.inkos` credential store, never in the project directory.
+  `.inkos/secrets.json`; imported Codex CLI credentials live under the
+  user-level `~/.inkos/credentials/codex` store. Grok credentials remain a
+  later integration. Login credentials never live in the project directory.
 
 ## Schema version and compatibility
 
@@ -120,9 +121,43 @@ deadline while retaining history. Quota and authentication states require an
 explicit `ResilientChatRuntime.resetBackend()` or successful
 `recordProbe()` call; they never recover on a short timer.
 
-Codex and Grok credential references remain explicit but unavailable to this
-API-key runtime. They are skipped with a safe unsupported-credential reason
-until their dedicated transports are added.
+Codex credential references use the same pool and health policy as API-key
+credentials. The dedicated adapter resolves and pre-refreshes the credential,
+forces at most one refresh after an explicit 401/403, retries the same backend
+once, then returns structured `auth` so the pool can mark `auth_required` and
+switch within the same logical route. Grok credentials remain unavailable
+until their dedicated integration.
+
+## Using existing Codex CLI credentials
+
+Studio labels this flow **Use Codex login credentials**. It imports an existing
+Codex CLI `auth.json`; InkOS does not perform browser OAuth and never asks for
+the user's password.
+
+Discovery order is `CODEX_AUTH_FILE`, `CODEX_HOME/auth.json`, project
+`.codex/auth.json`, then user `~/.codex/auth.json`. Canonical duplicate paths
+are collapsed. The API returns only source labels, a safe file name, masked
+account metadata, expiry and a bounded status; it never returns the absolute
+path or JSON/token content.
+
+The default **Import copy** action validates a maximum 1 MiB JSON object with a
+`tokens` object and `tokens.access_token`, then atomically writes an
+InkOS-managed copy and user-level registry with restrictive permissions.
+`tokens.refresh_token`, explicit expiry fields, or JWT `exp`/account claims are
+used only for refresh/status metadata. A deliberately selected external
+reference is read-only: near expiry it asks for re-import instead of changing
+the Codex CLI file. Re-import replaces the managed copy. Deleting an InkOS
+reference deletes only its registry entry and managed copy; it never deletes
+an external Codex CLI file, and deletion is blocked while a backend uses it.
+
+Codex backends use the Responses endpoint, bearer and account headers,
+`Accept: text/event-stream`, an originator and per-request ID. The adapter
+normalizes `/v1/responses` to `/responses`, forces `store:false` and streaming,
+removes unsupported completion fields, safely collects streaming output for
+non-incremental callers, and maps usage, cancellation, partial streams and
+provider errors into the existing Core result/error model. The route owns the
+GPT (or explicitly configured) prompt family, so a Codex-to-API-key switch
+reuses one family/revision and injects it only once per attempt.
 
 ## Studio management and A/B setup
 
@@ -156,8 +191,7 @@ routes cannot be deleted. Quota/auth health requires key/account repair plus a
 manual probe or reset; Studio does not describe those states as short
 automatic cooldowns.
 
-Codex and Grok credential kinds appear only as future-compatible metadata in
-this release. Their import, login, refresh, and transport flows are not
-available until the dedicated credential PRs. Studio Agent chat does not
-claim automatic failover yet; production pipelines are the routed path in
+Codex credential import, refresh and Responses routing are available here.
+Grok OAuth remains future-compatible metadata only. Studio Agent chat does
+not claim automatic failover yet; production pipelines are the routed path in
 this release.

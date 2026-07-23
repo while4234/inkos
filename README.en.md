@@ -233,6 +233,18 @@ inkos config show-models        # View current routing
 
 Agents without explicit overrides fall back to the global model.
 
+To use an existing Codex CLI login credential, open Studio's **Model
+continuity** page and choose **Use Codex login credentials**. InkOS discovers
+`CODEX_AUTH_FILE`, `CODEX_HOME/auth.json`, project `.codex/auth.json`, then
+user `~/.codex/auth.json`, de-duplicates paths, and imports a validated copy
+into the user-level `~/.inkos/credentials/codex` store. The project keeps only
+the credential ID. This is not browser OAuth inside InkOS. Managed copies use
+single-flight near-expiry refresh and at most one forced refresh after an
+explicit 401/403. Re-import replaces the copy; deleting an InkOS reference
+never deletes the external Codex CLI file. See
+[MODEL_ROUTING.md](./MODEL_ROUTING.md) for the complete security and transport
+contract.
+
 **Configuration troubleshooting**
 
 ```bash

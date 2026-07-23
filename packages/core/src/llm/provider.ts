@@ -29,6 +29,8 @@ import {
   type ModelGlobalPromptMode,
   type ModelGlobalPromptResolution,
 } from "./model-global-prompt.js";
+import { requestCodexResponses } from "./codex-responses-transport.js";
+import type { ResolvedCodexCredential } from "./credentials/index.js";
 
 
 // === Streaming Monitor Types ===
@@ -169,6 +171,8 @@ export interface LLMClient {
   readonly _routeRuntime?: LLMRouteRuntimeDelegate;
   /** Internal marker that selects the structured native compatible transport. */
   readonly _routingBackendId?: string;
+  /** Internal dynamic Codex credential; never serialize or expose to callers. */
+  readonly _codexCredential?: ResolvedCodexCredential;
   readonly defaults: {
     readonly temperature: number;
     /**
@@ -1220,6 +1224,19 @@ export async function chatCompletion(
           reservedOutputTokens: resolved.maxTokens,
         });
         if (shouldUseNativeCustomTransport(client)) {
+          if (client._codexCredential) {
+            return requestCodexResponses({
+              baseUrl: client._piModel?.baseUrl,
+              model,
+              messages: preparedMessages,
+              credential: client._codexCredential,
+              extra: resolved.extra,
+              proxyUrl: client.proxyUrl,
+              signal,
+              onTextDelta,
+              errorContext: errorCtx,
+            });
+          }
           return chatCompletionViaCustomOpenAICompatible(
             client,
             model,

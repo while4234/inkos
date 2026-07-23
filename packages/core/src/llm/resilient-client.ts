@@ -169,7 +169,7 @@ export class ResilientChatRuntime {
   ): Promise<LLMResponse> {
     throwIfRoutingCancelled(options?.signal, { logicalModelId: routeId });
     const immutableMessages = snapshotMessages(messages);
-    const resolution = await this.pool.resolve(routeId);
+    const resolution = await this.pool.resolve(routeId, new Set(), options?.signal);
     const promptResolution = this.resolveRoutePrompt(
       resolution.route,
       options?.modelGlobalPrompt,
@@ -379,7 +379,7 @@ export class ResilientChatRuntime {
       service: backend.service,
       configSource: this.options.baseConfig.configSource,
       baseUrl: backend.baseUrl,
-      apiKey: credential.apiKey,
+      apiKey: credential.kind === "api_key" ? credential.apiKey : "",
       model: candidate.upstreamModelId,
       proxyUrl: this.options.baseConfig.proxyUrl,
       temperature: this.options.baseConfig.temperature,
@@ -392,6 +392,9 @@ export class ResilientChatRuntime {
     return {
       ...client,
       _routingBackendId: backend.id,
+      ...(credential.kind === "codex"
+        ? { _codexCredential: credential }
+        : {}),
     };
   }
 

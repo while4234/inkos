@@ -2,6 +2,8 @@ import type { StateCreator } from "zustand";
 import type { ChatStore, Message, MessageActions, MessagePart, PipelineStage, ToolExecution } from "../../types";
 import { shouldRefreshSidebarForTool } from "../../message-policy";
 import { tr } from "../../../../lib/app-language";
+import type { RoutingActivityEventDTO } from "../../../../shared/contracts";
+import { reduceRoutingSummary } from "../../../../shared/routing-summary";
 import {
   deriveFlat,
   extractToolDetails,
@@ -108,6 +110,17 @@ export function appendBoundedToolLogs(
   incoming: ReadonlyArray<string>,
 ): string[] {
   return [...(existing ?? []), ...incoming].slice(-MAX_TOOL_LOGS);
+}
+
+export function applyRoutingEventToTaskMessages(
+  messages: ReadonlyArray<Message>,
+  taskId: string,
+  event: RoutingActivityEventDTO,
+): ReadonlyArray<Message> | null {
+  return updateToolPartById(messages, taskId, (execution) => ({
+    ...execution,
+    routingSummary: reduceRoutingSummary(execution.routingSummary, event),
+  }));
 }
 
 /**
@@ -376,6 +389,23 @@ export function attachSessionStreamListeners({
       if (!keepStream) streamEs.close();
     } catch {
       // ignore
+    }
+  });
+
+  streamEs.addEventListener("routing:event", (event: MessageEvent) => {
+    try {
+      const data = event.data ? JSON.parse(event.data) as RoutingActivityEventDTO : null;
+      if (!data || data.context?.sessionId !== sessionId) return;
+      const taskId = data.context?.taskId;
+      if (!taskId) return;
+      set((state) => ({
+        sessions: updateSession(state.sessions, sessionId, (runtime) => {
+          const messages = applyRoutingEventToTaskMessages(runtime.messages, taskId, data);
+          return messages ? { messages } : {};
+        }),
+      }));
+    } catch {
+      // ignore malformed or unrelated activity
     }
   });
 

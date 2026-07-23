@@ -7,6 +7,7 @@ export type HashRoute =
   | { page: "book-settings"; bookId: string }
   | { page: "book-create" }
   | { page: "services" }
+  | { page: "model-routing" }
   | { page: "project-settings" }
   | { page: "service-detail"; serviceId: string }
   | { page: "chapter"; bookId: string; chapterNumber: number }
@@ -32,6 +33,7 @@ function parseHash(hash: string): HashRoute {
   if (!path || path === "/") return { page: "dashboard" };
   if (path === "chat") return { page: "chat" };
   if (path === "config" || path === "services") return { page: "services" };
+  if (path === "model-routing") return { page: "model-routing" };
   if (path === "settings") return { page: "project-settings" };
   if (path === "import") return { page: "import" };
   if (path === "translation") return { page: "translation" };
@@ -74,6 +76,7 @@ function routeToHash(route: HashRoute): string {
     case "book-settings": return `#/book/${encodeURIComponent(route.bookId)}/settings`;
     case "book-create": return "#/book/new";
     case "services": return "#/services";
+    case "model-routing": return "#/model-routing";
     case "project-settings": return "#/settings";
     case "translation": return "#/translation";
     case "import": return route.tab ? `#/import/${route.tab}` : "#/import";
@@ -89,7 +92,7 @@ function routeToHash(route: HashRoute): string {
 
 export { parseHash, routeToHash }; // for testing
 
-const HASH_PAGES = new Set(["dashboard", "chat", "book", "book-settings", "book-create", "services", "project-settings", "service-detail", "translation", "import", "play", "film", "flow", "film-author", "film-studio"]);
+const HASH_PAGES = new Set(["dashboard", "chat", "book", "book-settings", "book-create", "services", "model-routing", "project-settings", "service-detail", "translation", "import", "play", "film", "flow", "film-author", "film-studio"]);
 
 export function useHashRoute() {
   const [route, setRouteState] = useState<HashRoute>(() => parseHash(window.location.hash));

@@ -1,4 +1,5 @@
 import type { ActionPayload, ActionSource, PlayMode, RequestedIntent, SessionKind } from "@actalk/inkos-core";
+import type { StudioRoutingSummary } from "../../shared/contracts";
 
 // -- Data types --
 
@@ -30,6 +31,7 @@ export interface ToolExecution {
   error?: string;
   stages?: PipelineStage[];
   logs?: string[];
+  routingSummary?: StudioRoutingSummary;
   startedAt: number;
   completedAt?: number;
   // 后台生产任务的工具卡（来自带 background 标记的 tool:start 或任务快照恢复）。

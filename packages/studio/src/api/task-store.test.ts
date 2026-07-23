@@ -76,6 +76,53 @@ describe("Studio task snapshots", () => {
     });
   });
 
+  it("persists the latest active backend and safe switch history across refresh", async () => {
+    await saveStudioTaskSnapshot(root, {
+      version: 1,
+      sessionId: "session-routing",
+      requestedIntent: "write_next",
+      updatedAt: 30,
+      execution: {
+        id: "task-routing",
+        tool: "sub_agent",
+        agent: "writer",
+        label: "写作",
+        status: "completed",
+        startedAt: 10,
+        completedAt: 30,
+        routingSummary: {
+          logicalModelId: "route-ab",
+          logicalModelDisplayName: "Writer",
+          activeBackendId: "backend-b",
+          retryCount: 1,
+          lastEventAt: "2026-07-24T00:00:00.000Z",
+          switches: [{
+            eventId: "request-1:3",
+            requestId: "request-1",
+            type: "backend_switched",
+            timestamp: "2026-07-24T00:00:00.000Z",
+            logicalModelId: "route-ab",
+            logicalModelDisplayName: "Writer",
+            phase: "retry",
+            fromBackendId: "backend-a",
+            toBackendId: "backend-b",
+            reason: "quota",
+            retryCount: 1,
+          }],
+        },
+      },
+    });
+
+    const restored = await loadStudioTaskSnapshot(root, "session-routing");
+    expect(restored?.execution.routingSummary).toMatchObject({
+      activeBackendId: "backend-b",
+      retryCount: 1,
+    });
+    const serialized = await readFile(studioTaskSnapshotPath(root, "session-routing"), "utf-8");
+    expect(serialized).not.toContain("apiKey");
+    expect(serialized).not.toContain("Authorization");
+  });
+
   it("treats a corrupt snapshot as unavailable instead of crashing session restore", async () => {
     const path = studioTaskSnapshotPath(root, "session-3");
     await saveStudioTaskSnapshot(root, {

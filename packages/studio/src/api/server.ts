@@ -135,6 +135,7 @@ import {
   saveStudioTaskSnapshot,
   type StudioTaskSnapshot,
 } from "./task-store.js";
+import { registerModelManagementRoutes } from "./routes/model-management.js";
 
 // -- Studio server language (read per request from the project config's `language`) --
 
@@ -2679,6 +2680,7 @@ async function probeServiceCapabilities(args: {
 export function createStudioServer(initialConfig: ProjectConfig, root: string, overrides: { readonly nodeImageGenerator?: NodeImageDeps } = {}) {
   const app = new Hono();
   const state = new StateManager(root);
+  const modelManagement = registerModelManagementRoutes(app, root);
   let cachedConfig = initialConfig;
   const activeConfirmedTasks = new Map<string, AbortController>();
   // 确认式生产任务的单任务名额（sessionId → taskId）。原来的检查是"await 读快照
@@ -2721,6 +2723,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       updatedAt: Date.now(),
       execution: {
         ...exec,
+        ...(modelManagement.activity.summary(exec.id)
+          ? { routingSummary: modelManagement.activity.summary(exec.id) }
+          : {}),
         ...(exec.stages ? { stages: exec.stages.map((stage) => ({ ...stage })) } : {}),
         ...(exec.logs ? { logs: [...exec.logs] } : {}),
       },
@@ -2918,6 +2923,22 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           chineseChars: progress.chineseChars,
         });
       },
+      ...(currentConfig.llm.routing
+        ? {
+            onRoutingEvent: (event) => {
+              const routingEvent = modelManagement.activity.record(
+                event,
+                currentConfig.llm.routing!,
+                {
+                  ...(overrides?.sessionIdForSSE ? { sessionId: overrides.sessionIdForSSE } : {}),
+                  ...(overrides?.executionIdForSSE ? { taskId: overrides.executionIdForSSE } : {}),
+                  ...(overrides?.bookIdForSettings ? { bookId: overrides.bookIdForSettings } : {}),
+                },
+              );
+              broadcast("routing:event", routingEvent);
+            },
+          }
+        : {}),
       externalContext: overrides?.externalContext,
     };
   }
@@ -3640,13 +3661,23 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
     const secrets = await loadSecrets(root);
     const key = coverSecretKey(service);
-    if (trimmedKey) {
-      secrets.services[key] = { apiKey: trimmedKey };
-    } else {
-      delete secrets.services[key];
+    if (!trimmedKey) {
+      return c.json({ ok: true, service, changed: false });
     }
+    secrets.services[key] = { apiKey: trimmedKey };
     await saveSecrets(root, secrets);
-    return c.json({ ok: true, service });
+    return c.json({ ok: true, service, changed: true });
+  });
+
+  app.delete("/api/v1/cover/secret/:service", async (c) => {
+    const service = c.req.param("service");
+    if (!resolveCoverProviderPreset(service)) {
+      return c.json({ error: "Unsupported cover service" }, 400);
+    }
+    const secrets = await loadSecrets(root);
+    delete secrets.services[coverSecretKey(service)];
+    await saveSecrets(root, secrets);
+    return c.json({ ok: true, service, changed: true });
   });
 
   app.delete("/api/v1/services/:service", async (c) => {
@@ -3756,23 +3787,30 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const { apiKey } = await c.req.json<{ apiKey: string }>();
     const secrets = await loadSecrets(root);
     const trimmedKey = apiKey?.trim() ?? "";
-    if (trimmedKey) {
-      if (!isHeaderSafeApiKey(trimmedKey)) {
-        return c.json({
-          ok: false,
-          error: pick(
-            await currentProjectLanguage(),
-            "API Key 只能包含可放进 HTTP Authorization header 的非空白 ASCII 字符；请不要粘贴连接失败提示或诊断文本。",
-            "API Key may only contain non-whitespace ASCII characters that fit in an HTTP Authorization header; do not paste connection failure hints or diagnostic text.",
-          ),
-        }, 400);
-      }
-      secrets.services[service] = { apiKey: trimmedKey };
-    } else {
-      delete secrets.services[service];
+    if (!trimmedKey) {
+      return c.json({ ok: true, changed: false });
     }
+    if (!isHeaderSafeApiKey(trimmedKey)) {
+      return c.json({
+        ok: false,
+        error: pick(
+          await currentProjectLanguage(),
+          "API Key 只能包含可放进 HTTP Authorization header 的非空白 ASCII 字符；请不要粘贴连接失败提示或诊断文本。",
+          "API Key may only contain non-whitespace ASCII characters that fit in an HTTP Authorization header; do not paste connection failure hints or diagnostic text.",
+        ),
+      }, 400);
+    }
+    secrets.services[service] = { apiKey: trimmedKey };
     await saveSecrets(root, secrets);
-    return c.json({ ok: true });
+    return c.json({ ok: true, changed: true });
+  });
+
+  app.delete("/api/v1/services/:service/secret", async (c) => {
+    const service = c.req.param("service");
+    const secrets = await loadSecrets(root);
+    delete secrets.services[service];
+    await saveSecrets(root, secrets);
+    return c.json({ ok: true, changed: true });
   });
 
   app.get("/api/v1/services/:service/secret", async (c) => {

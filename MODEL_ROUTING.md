@@ -123,3 +123,41 @@ explicit `ResilientChatRuntime.resetBackend()` or successful
 Codex and Grok credential references remain explicit but unavailable to this
 API-key runtime. They are skipped with a safe unsupported-credential reason
 until their dedicated transports are added.
+
+## Studio management and A/B setup
+
+Open **Providers → Model continuity and failover** (`#/model-routing`) to
+manage the normalized graph. Studio's browser API exposes credential status
+and a short mask only; it never returns a complete API key. Leaving a key
+field blank keeps the stored value. Replacing a key is an explicit PUT and
+clearing it is an explicit DELETE.
+
+To configure two OpenAI-compatible endpoints:
+
+1. Create backend A and backend B with distinct stable IDs, HTTPS/local
+   endpoints, and API keys. The key input is cleared after submission and is
+   never rehydrated into the form.
+2. Create one logical route, select A then B in candidate order, provide the
+   upstream model ID, and choose the route's explicit prompt family.
+3. Set that route as the default. Per-Agent routing remains under Project
+   settings; route-aware overrides are stored as `{ "routeId": "..." }`.
+4. Probe both backends from the health area. Probes call the controlled
+   `/models` boundary and do not send a chat prompt or inject a model-global
+   prompt.
+5. Run a production task against a mock or authorized provider. A quota/auth
+   failure on A makes the Core resilient runtime select B. The task card and
+   recent activity show the logical model, A → B, safe reason, and routing
+   phase. Refreshing Studio restores the task summary and backend health.
+
+Every graph mutation includes the routing revision returned by the last GET.
+An outdated page receives a revision conflict and must reload instead of
+overwriting another page's edit. Backends referenced by a route and default
+routes cannot be deleted. Quota/auth health requires key/account repair plus a
+manual probe or reset; Studio does not describe those states as short
+automatic cooldowns.
+
+Codex and Grok credential kinds appear only as future-compatible metadata in
+this release. Their import, login, refresh, and transport flows are not
+available until the dedicated credential PRs. Studio Agent chat does not
+claim automatic failover yet; production pipelines are the routed path in
+this release.

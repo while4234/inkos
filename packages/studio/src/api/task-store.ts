@@ -1,6 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RequestedIntent } from "@actalk/inkos-core";
+import type { StudioRoutingSummary } from "../shared/contracts.js";
 
 export type StudioTaskExecutionStatus = "running" | "processing" | "completed" | "error";
 
@@ -19,6 +20,7 @@ export interface StudioTaskExecution {
     readonly status: "pending" | "active" | "completed";
   }>;
   readonly logs?: ReadonlyArray<string>;
+  readonly routingSummary?: StudioRoutingSummary;
   readonly startedAt: number;
   readonly completedAt?: number;
 }

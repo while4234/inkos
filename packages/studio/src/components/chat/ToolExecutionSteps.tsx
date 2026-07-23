@@ -694,6 +694,7 @@ function PipelineExecution({
 
   const bookId = exec.args?.bookId as string | undefined;
   const forecastDetails = getNarrativeForecastPreviewDetails(exec);
+  const latestSwitch = exec.routingSummary?.switches.at(-1);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="rounded-xl border border-border/40 bg-card/60">
@@ -719,6 +720,22 @@ function PipelineExecution({
         onProposedAction={onProposedAction}
         onRejectProposedAction={onRejectProposedAction}
       />
+      {latestSwitch && (
+        <div
+          role="status"
+          className="mx-3 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-foreground"
+        >
+          <span className="font-medium">{latestSwitch.logicalModelDisplayName}</span>
+          {" · "}
+          <span className="font-mono">{latestSwitch.fromBackendId ?? tr("未知", "unknown")}</span>
+          {" → "}
+          <span className="font-mono">{latestSwitch.toBackendId ?? tr("未知", "unknown")}</span>
+          {" · "}
+          {latestSwitch.reason ?? tr("候选不可用", "candidate unavailable")}
+          {" · "}
+          {tr("阶段", "phase")}: {latestSwitch.phase}
+        </div>
+      )}
       <ShortFictionResultPreview exec={exec} />
       <ScriptStoryboardResultPreview exec={exec} onOpenFilmStudio={onOpenFilmStudio} />
       <PlayResultPreview exec={exec} />
@@ -883,7 +900,7 @@ export function groupToolExecutionsChronologically(executions: ToolExecution[]):
   };
 
   for (const exec of executions) {
-    if (isPipelineTool(exec.tool)) {
+    if (isPipelineTool(exec.tool) || exec.routingSummary) {
       flushUtils();
       groups.push({ type: "pipeline", exec });
     } else {

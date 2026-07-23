@@ -1,68 +1,60 @@
 # Project Handoff
 
-Last updated: 2026-07-24 00:52 CST
+Last updated: 2026-07-24 01:55 CST
 Project root: D:\lnkos
-Pipeline: `model-continuity-p0`
-Position: PR-04 accepted on `feature/model-continuity-pr04`; delivery target is `origin/master`
+Branch after delivery: `master`
+Status: PR-05 accepted; PR-06 is next
 
 ## Current Goal
 
-Deliver PR-01 through PR-09 serially. Each PR uses a different implementation agent, receives full acceptance validation, then becomes one atomic fast-forward commit on `origin/master` before the next PR starts.
+Continue `model-continuity-p0` with PR-06, adding Codex CLI credential import, user-level secure storage, Responses transport, and refresh without regressing the shared routing runtime.
 
 ## Current Position
 
-PR-01 through PR-03 are committed and verified on `origin/master`; PR-03 is at `4e688e98ae8784fcf5c35fc4bb30c9d22e78f597`. PR-04 adds explicit model-family selection plus one final-transport-boundary prompt implementation shared by direct and route-aware `chatCompletion()`. Its implementation, focused validation, full repository gates, build-artifact check, compatibility review, and safe-output review are complete. Delivery is one atomic commit followed by fast-forward-only `master` update, `origin/master` push, remote SHA verification, and local pipeline completion recording.
+PR-01 through PR-04 are on `origin/master` through `50e3e46c`. PR-05 is the current HEAD after delivery and adds Studio routing management; use `git rev-parse HEAD` for its delivery SHA. The next branch must be `feature/model-continuity-pr06` from the latest verified `master`, and only PR-06 may be rendered.
 
 ## Recent Actions
 
-- Added `PromptFamilySchema` support for `gpt`, `grok`, `deepseek`, and `none`, retaining `generic` only as the deterministic compatibility sentinel for already-migrated routes.
-- Added three independently auditable TypeScript prompt assets with stable IDs, revisions, and non-secret boundary markers.
-- Added pure deep-cloning injection/stripping that replaces old family/revision prefixes, remains idempotent, and always precedes existing string, structured, or opaque system content.
-- Resolved one family/revision per logical route before attempts and reused it across local retry and A-to-B failover; routing events expose metadata only.
-- Explicitly disabled model-global prompting in Core provider verification, CLI doctor connectivity, and Studio service probes.
-- Exported a reusable Grok history transform that removes replayed assistant reasoning/thinking while preserving text and tool semantics for PR-08.
-- Added family-resolution, asset, ordering, immutability, history, probe opt-out, and local A/B HTTP tests; corrected marker matching so project-owned lookalike markers are never stripped.
+- Added modular Studio APIs for credential status, backend/route CRUD, health probe/reset, activity, ETag/revision conflict handling, and serialized atomic graph mutations.
+- Added masked API Key status plus explicit replace/keep/clear behavior for normalized, legacy service, and cover credentials.
+- Added `#/model-routing` for backend health, route candidates/defaults, key management, and Agent route overrides.
+- Connected Core routing events to Studio SSE, de-duplicated ordered reducers, task snapshots, recent activity, and A→B task banners.
+- Hardened backend deletion to remove orphaned credentials/secrets with rollback, and bounded SSE replay IDs in persisted summaries.
 
 ## Changed / Relevant Files
 
-- `packages/core/src/llm/model-global-prompt.ts`
-- `packages/core/src/llm/model-global-prompts/{gpt,grok,deepseek}.ts`
-- `packages/core/src/llm/model-routing.ts`
-- `packages/core/src/llm/resilient-client.ts`
-- `packages/core/src/llm/routing-trace.ts`
-- `packages/core/src/llm/provider.ts`
-- `packages/core/src/llm/providers/verify.ts`
-- `packages/core/src/index.ts`
-- `packages/core/src/__tests__/model-global-prompt.test.ts`
-- Routing, resilient-client, verify, PipelineRunner, Studio server, and CLI doctor tests/call sites
-- `MODEL_ROUTING.md`
+- `packages/studio/src/api/routes/`: model management store, DTOs, APIs, activity, health, and tests.
+- `packages/studio/src/pages/ModelRoutingPage.tsx`, `model-routing-state.ts`: routing UI and key/health semantics.
+- `packages/studio/src/shared/contracts.ts`, `routing-summary.ts`: browser-safe contracts and replay-safe reducers.
+- `packages/studio/src/api/server.ts`, `task-store.ts`: registration, observer bridge, secret semantics, and task persistence.
+- `packages/studio/src/store/chat/`, `components/chat/ToolExecutionSteps.tsx`: live/task routing summaries.
+- `MODEL_ROUTING.md`, `GIT_NOTES.md`: behavior, migration, acceptance, and scope notes.
 
 ## Validation
 
-- `corepack pnpm@9.15.9 install --frozen-lockfile` -> passed.
-- Root `build` and `typecheck` -> passed after final acceptance fixes.
-- Root `test` -> passed for Core, Studio, and CLI. Core reported 191 files / 1859 tests after the final two acceptance tests.
-- `verify:publish-manifests` -> passed for Core, CLI, and Studio.
-- Final focused prompt/routing/resilient/verify subset -> 4 files / 52 tests passed; Core typecheck also passed.
-- Built `packages/core/dist` contains exactly three model-global prompt asset modules, and the compiled registry imports successfully.
-- `git diff --check` -> passed before handoff update; final staged diff check remains part of the commit gate.
-- Forbidden-path and added-line credential scans found zero matches. Routing-event tests confirm complete prompt text is absent.
+- Studio focused regression and client/server typecheck passed.
+- Studio package: 63 files / 565 tests and production build passed.
+- Repository gates with pnpm 9.15.9 passed: frozen install, build, typecheck, test, and publish-manifest verification.
+- Repository test totals: Core 191 files / 1859 tests; Studio 63 / 565; CLI 41 / 229.
+- The first root test attempt had one isolated core dynamic-import timeout at 15.645s; the isolated test passed in 6.395s and the exact full root test rerun passed.
+- Repository-external Studio browser smoke passed for two masked backends, route creation, probe, Chinese/English, keyboard focus, 375px overflow, console errors, and full-secret absence from HTML/DOM.
+- `git diff --check`, forbidden-path review, and credential review passed; browser and temporary content artifacts were removed.
 
 ## Blockers / Risks
 
-- No PR-04 blocker remains.
-- Unknown endpoint/service/model combinations conservatively resolve to `none` with diagnostic source metadata; saving an explicit route `promptFamily` makes the choice persistent.
-- Studio Agent `streamSimple()` is not yet connected to this boundary; PR-08 must reuse the exported implementation and Grok history transform.
-- Prompt assets are TypeScript constants so the normal Core compiler and package include them without a separate copy step.
+- No PR-05 blocker remains.
+- Codex/Grok metadata is display-only until PR-06/07.
+- Studio Agent `streamSimple()` remains intentionally outside automatic failover until PR-08.
+- Candidate updates require the latest routing revision; stale pages fail with 409 instead of overwriting.
 
 ## Next Steps
 
-1. Create the atomic PR-04 commit `feat: add model family global prompts`.
-2. Re-fetch `origin`, fast-forward local `master`, push only `origin/master`, and verify the remote SHA.
-3. Mark PR-04 complete in local pipeline state with the commit and validation evidence.
-4. Render PR-05 only, create `feature/model-continuity-pr05` from verified `master`, and assign a fifth, different implementation agent.
+1. Confirm local `master`, `origin/master`, and PR-05 pipeline SHA match.
+2. Render only PR-06 and assign it to a new agent.
+3. Keep Codex credentials in the user-level credential directory and reuse Core routing/error/prompt boundaries; do not add Grok OAuth or Agent streaming early.
 
-## Safety Notes
+## Notes For Next Session
 
-- Never push `upstream`, force-push, publish, deploy, or call real paid model/OAuth services for this pipeline.
-- Never put API keys, tokens, Authorization headers, runtime content, or `.codex/pr-pipeline/` state in Git.
+- Normalized CRUD synchronizes the current legacy service/model/provider/baseUrl selection.
+- Health storage is lazy so unrelated Studio tests remain decoupled.
+- All provider/probe/failover behavior was mocked or local; no real provider, OAuth, paid model, deployment, or `upstream` push was used.

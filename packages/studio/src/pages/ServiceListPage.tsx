@@ -11,6 +11,7 @@ import { ServiceConfigSourceCard } from "../components/ServiceConfigSourceCard";
 interface Nav {
   toDashboard: () => void;
   toServiceDetail: (id: string) => void;
+  toModelRouting: () => void;
 }
 
 function SkeletonCard() {
@@ -229,6 +230,29 @@ function CoverConfigCard() {
           {status === "saving" && <Loader2 size={12} className="animate-spin" />}
           {tr("保存封面配置", "Save cover config")}
         </button>
+        {hasStoredSecret && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!window.confirm(tr("清除当前封面 API Key？", "Clear the current cover API Key?"))) return;
+              setStatus("saving");
+              void fetchJson(`/cover/secret/${encodeURIComponent(service)}`, { method: "DELETE" })
+                .then(() => {
+                  setApiKey("");
+                  setHasStoredSecret(false);
+                  setStatus("saved");
+                  setMessage(tr("封面 API Key 已清除", "Cover API Key cleared"));
+                })
+                .catch((error) => {
+                  setStatus("error");
+                  setMessage(error instanceof Error ? error.message : tr("清除失败", "Clear failed"));
+                });
+            }}
+            className="rounded-lg border border-destructive/30 px-3.5 py-2 text-xs text-destructive"
+          >
+            {tr("清除 API Key", "Clear API Key")}
+          </button>
+        )}
         {selected?.baseUrl && (
           <span className="text-xs text-muted-foreground/60">
             Base URL: <span className="font-mono">{selected.baseUrl}</span>
@@ -335,6 +359,17 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
       <h1 className="font-serif text-2xl">{tr("服务商管理", "Providers")}</h1>
 
       <ServiceConfigSourceCard onChange={() => { void refreshServices(); }} />
+
+      <button
+        type="button"
+        onClick={nav.toModelRouting}
+        className="w-full rounded-xl border border-primary/30 bg-primary/5 p-4 text-left transition-colors hover:bg-primary/10"
+      >
+        <span className="block text-sm font-medium">{tr("模型连续性与故障转移", "Model continuity and failover")}</span>
+        <span className="mt-1 block text-xs text-muted-foreground">
+          {tr("管理后端、逻辑路由、健康状态、候选顺序和最近切换。", "Manage backends, logical routes, health, candidate order, and recent switches.")}
+        </span>
+      </button>
 
       <CoverConfigCard />
 

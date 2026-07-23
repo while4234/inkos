@@ -324,6 +324,12 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     isApiKeyOptionalForEndpoint: actual.isApiKeyOptionalForEndpoint,
     loadSecrets: loadSecretsMock,
     saveSecrets: saveSecretsMock,
+    BackendInstanceSchema: actual.BackendInstanceSchema,
+    CredentialMetadataSchema: actual.CredentialMetadataSchema,
+    LogicalModelRouteSchema: actual.LogicalModelRouteSchema,
+    ModelRoutingConfigSchema: actual.ModelRoutingConfigSchema,
+    FileBackendHealthStore: actual.FileBackendHealthStore,
+    writeJsonAtomically: actual.writeJsonAtomically,
     writeProjectConfigWithRouting: writeProjectConfigWithRoutingMock,
     getServiceApiKey: getServiceApiKeyMock,
     listModelsForService: listModelsForServiceMock,
@@ -2262,6 +2268,57 @@ describe("createStudioServer daemon lifecycle", () => {
     const payload = await response.json();
     expect(payload).toEqual({ configured: true, maskedApiKey: "sk-c…cret" });
     expect(JSON.stringify(payload)).not.toContain("sk-cover-secret");
+  });
+
+  it("keeps blank service secret edits and clears only through explicit DELETE", async () => {
+    loadSecretsMock.mockResolvedValue({
+      services: {
+        moonshot: { apiKey: "fixture-existing-service-key" },
+      },
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const keep = await app.request("http://localhost/api/v1/services/moonshot/secret", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "   " }),
+    });
+    expect(keep.status).toBe(200);
+    await expect(keep.json()).resolves.toMatchObject({ changed: false });
+    expect(saveSecretsMock).not.toHaveBeenCalled();
+
+    const clear = await app.request("http://localhost/api/v1/services/moonshot/secret", {
+      method: "DELETE",
+    });
+    expect(clear.status).toBe(200);
+    expect(saveSecretsMock).toHaveBeenCalledWith(root, { services: {} });
+  });
+
+  it("keeps blank cover secret edits and clears only through explicit DELETE", async () => {
+    loadSecretsMock.mockResolvedValue({
+      services: {
+        "cover:kkaiapi": { apiKey: "fixture-existing-cover-key" },
+      },
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const keep = await app.request("http://localhost/api/v1/cover/secret/kkaiapi", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "" }),
+    });
+    expect(keep.status).toBe(200);
+    await expect(keep.json()).resolves.toMatchObject({ changed: false });
+    expect(saveSecretsMock).not.toHaveBeenCalled();
+
+    const clear = await app.request("http://localhost/api/v1/cover/secret/kkaiapi", {
+      method: "DELETE",
+    });
+    expect(clear.status).toBe(200);
+    expect(saveSecretsMock).toHaveBeenCalledWith(root, { services: {} });
   });
 
   it("rejects non-header-safe service secrets instead of persisting diagnostic text", async () => {

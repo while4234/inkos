@@ -9,6 +9,7 @@ import { ChapterReader } from "./pages/ChapterReader";
 import { Analytics } from "./pages/Analytics";
 import { ServiceListPage } from "./pages/ServiceListPage";
 import { ServiceDetailPage } from "./pages/ServiceDetailPage";
+import { ModelRoutingPage } from "./pages/ModelRoutingPage";
 import { ProjectSettings } from "./pages/ProjectSettings";
 import { TruthFiles } from "./pages/TruthFiles";
 import { DaemonControl } from "./pages/DaemonControl";
@@ -99,6 +100,7 @@ export function App() {
       setRoute({ page: "chapter", bookId, chapterNumber }),
     toAnalytics: (bookId: string) => setRoute({ page: "analytics", bookId }),
     toServices: () => setRoute({ page: "services" }),
+    toModelRouting: () => setRoute({ page: "model-routing" }),
     toProjectSettings: () => setRoute({ page: "project-settings" }),
     toServiceDetail: (id: string) => setRoute({ page: "service-detail", serviceId: id }),
     toTruth: (bookId: string) => setRoute({ page: "truth", bookId }),
@@ -286,6 +288,11 @@ export function App() {
           {route.page === "services" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <ServiceListPage nav={nav} />
+            </div>
+          )}
+          {route.page === "model-routing" && (
+            <div className="max-w-5xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <ModelRoutingPage nav={nav} />
             </div>
           )}
           {route.page === "project-settings" && (

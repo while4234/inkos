@@ -141,3 +141,139 @@ export interface ApiErrorResponse {
     readonly message: string;
   };
 }
+
+// --- Model routing management ---
+
+export type StudioCredentialKind = "api_key" | "codex" | "grok_oauth";
+export type StudioPromptFamily = "gpt" | "grok" | "deepseek" | "none" | "generic";
+
+export interface CredentialStatusDTO {
+  readonly id: string;
+  readonly kind: StudioCredentialKind;
+  readonly label: string;
+  readonly scope: "project" | "user";
+  readonly configured: boolean;
+  readonly maskedHint: string | null;
+  readonly source: "project_secret" | "user_credential" | "not_configured";
+}
+
+export interface BackendInstanceDTO {
+  readonly id: string;
+  readonly displayName: string;
+  readonly service: string;
+  readonly provider: "anthropic" | "openai" | "custom";
+  readonly baseUrl: string;
+  readonly credential: CredentialStatusDTO;
+  readonly enabled: boolean;
+  readonly transport: {
+    readonly apiFormat: "chat" | "responses";
+    readonly stream: boolean;
+  };
+}
+
+export interface LogicalModelCandidateDTO {
+  readonly backendId: string;
+  readonly upstreamModelId: string;
+}
+
+export interface LogicalModelRouteDTO {
+  readonly id: string;
+  readonly displayName: string;
+  readonly promptFamily: StudioPromptFamily;
+  readonly enabled: boolean;
+  readonly candidates: ReadonlyArray<LogicalModelCandidateDTO>;
+  readonly isDefault: boolean;
+}
+
+export type BackendHealthStatusDTO =
+  | "healthy"
+  | "temporary_cooldown"
+  | "quota_exhausted"
+  | "auth_required"
+  | "disabled"
+  | "unknown";
+
+export interface BackendHealthDTO {
+  readonly backendId: string;
+  readonly status: BackendHealthStatusDTO;
+  readonly enabled: boolean;
+  readonly consecutiveFailures: number;
+  readonly lastSuccessAt: string | null;
+  readonly lastFailureAt: string | null;
+  readonly cooldownReason: string | null;
+  readonly cooldownUntil: string | null;
+  readonly recoveryCondition: "cooldown_elapsed" | "manual_reset_or_probe" | null;
+  readonly lastProbe: {
+    readonly at: string;
+    readonly outcome: "success" | "failure";
+    readonly reason: string | null;
+  } | null;
+}
+
+export type RoutingActivityType =
+  | "attempt_started"
+  | "local_retry"
+  | "backend_switched"
+  | "succeeded"
+  | "failed"
+  | "exhausted";
+
+export interface RoutingActivityContextDTO {
+  readonly sessionId?: string;
+  readonly taskId?: string;
+  readonly bookId?: string;
+  readonly chapter?: number;
+  readonly agent?: string;
+}
+
+export interface RoutingActivityEventDTO {
+  readonly eventId: string;
+  readonly requestId: string;
+  readonly type: RoutingActivityType;
+  readonly timestamp: string;
+  readonly logicalModelId: string;
+  readonly logicalModelDisplayName: string;
+  readonly phase: "selection" | "request" | "retry" | "complete";
+  readonly backendId?: string;
+  readonly fromBackendId?: string;
+  readonly toBackendId?: string;
+  readonly reason?: string;
+  readonly retryCount: number;
+  readonly context?: RoutingActivityContextDTO;
+}
+
+export interface SafeAggregateFailureSummaryDTO {
+  readonly logicalModelId: string;
+  readonly attempts: ReadonlyArray<{
+    readonly backendId: string;
+    readonly category: string;
+    readonly safeMessage: string;
+  }>;
+  readonly finalCategory: string;
+  readonly safeMessage: string;
+}
+
+export interface StudioRoutingSummary {
+  readonly logicalModelId: string | null;
+  readonly logicalModelDisplayName: string | null;
+  readonly activeBackendId: string | null;
+  readonly retryCount: number;
+  readonly switches: ReadonlyArray<RoutingActivityEventDTO>;
+  /** Bounded replay guard for SSE reconnects and task snapshot restores. */
+  readonly recentEventIds?: ReadonlyArray<string>;
+  readonly lastEventAt: string | null;
+}
+
+export interface ModelRoutingValidationIssueDTO {
+  readonly path: string;
+  readonly message: string;
+}
+
+export interface ModelRoutingValidationErrorDTO {
+  readonly error: {
+    readonly code: "MODEL_ROUTING_VALIDATION_ERROR" | "MODEL_ROUTING_REVISION_CONFLICT";
+    readonly message: string;
+    readonly issues?: ReadonlyArray<ModelRoutingValidationIssueDTO>;
+    readonly currentRevision?: string;
+  };
+}

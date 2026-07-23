@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Message } from "../../types";
 import {
   MAX_TOOL_LOGS,
   applyStreamTextDeltas,
   appendBoundedToolLogs,
+  applyRoutingEventToTaskMessages,
   createLatestEventThrottle,
   createStreamTextDeltaBatcher,
 } from "./stream-events";
@@ -87,5 +89,51 @@ describe("stream event performance helpers", () => {
     expect(logs).toHaveLength(MAX_TOOL_LOGS);
     expect(logs[0]).toBe("old-21");
     expect(logs.at(-1)).toBe("latest");
+  });
+
+  it("applies ordered routing attempt, retry, switch, and exhausted events to a task card", () => {
+    const taskId = "task-1";
+    let messages: Message[] = [{
+      role: "assistant" as const,
+      content: "",
+      timestamp: 1,
+      parts: [{
+        type: "tool" as const,
+        execution: {
+          id: taskId,
+          tool: "write_next",
+          label: "Write next",
+          status: "processing" as const,
+          startedAt: 1,
+        },
+      }],
+    }];
+    const base = {
+      requestId: "request-1",
+      timestamp: "2026-07-24T00:00:00.000Z",
+      logicalModelId: "route-ab",
+      logicalModelDisplayName: "Writer",
+      phase: "request" as const,
+      retryCount: 0,
+      context: { sessionId: "session-1", taskId },
+    };
+    for (const event of [
+      { ...base, eventId: "request-1:1", type: "attempt_started" as const, backendId: "backend-a" },
+      { ...base, eventId: "request-1:2", type: "local_retry" as const, phase: "retry" as const, backendId: "backend-a", retryCount: 1 },
+      { ...base, eventId: "request-1:3", type: "backend_switched" as const, phase: "retry" as const, fromBackendId: "backend-a", toBackendId: "backend-b", reason: "quota", retryCount: 1 },
+      { ...base, eventId: "request-1:3", type: "backend_switched" as const, phase: "retry" as const, fromBackendId: "backend-a", toBackendId: "backend-b", reason: "quota", retryCount: 1 },
+      { ...base, eventId: "request-1:4", type: "exhausted" as const, phase: "complete" as const, backendId: "backend-b", retryCount: 2 },
+    ]) {
+      messages = applyRoutingEventToTaskMessages(messages, taskId, event) as Message[];
+    }
+    const part = messages[0]?.parts?.[0];
+    expect(part?.type).toBe("tool");
+    const execution = part?.type === "tool" ? part.execution : undefined;
+    expect(execution?.routingSummary).toMatchObject({
+      logicalModelDisplayName: "Writer",
+      activeBackendId: "backend-b",
+      retryCount: 1,
+    });
+    expect(execution?.routingSummary?.switches).toHaveLength(1);
   });
 });

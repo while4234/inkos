@@ -15,6 +15,7 @@ import {
 } from "./failover-policy.js";
 import type { ModelRoutingConfig } from "./model-routing.js";
 import {
+  modelGlobalPromptOverridesFromConfig,
   resolveModelGlobalPrompt,
   toModelGlobalPromptTrace,
 } from "./model-global-prompt.js";
@@ -473,13 +474,9 @@ export class ResilientChatRuntime {
       service: firstBackend?.service,
       model: firstCandidate?.upstreamModelId,
       mode,
-      ...(route.globalPrompt ? {
-        customPrompt: {
-          id: `project:${route.id}`,
-          revision: route.globalPrompt.revision,
-          text: route.globalPrompt.text,
-        },
-      } : {}),
+      customPrompts: modelGlobalPromptOverridesFromConfig(
+        this.options.routing.modelGlobalPrompts,
+      ),
     });
   }
 }

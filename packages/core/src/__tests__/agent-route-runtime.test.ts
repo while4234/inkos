@@ -777,6 +777,7 @@ function routing(
         { backendId: "backend-b", upstreamModelId: "model-b" },
       ],
     }],
+    modelGlobalPrompts: {},
     defaultRouteId: "route-main",
   };
 }

@@ -60,18 +60,17 @@ describe("model-global prompt family resolution", () => {
     });
   });
 
-  it("uses a safe disabled fallback with a persistable diagnostic for unknown models", () => {
+  it("uses the other/custom family for unknown models", () => {
     const result = resolveModelGlobalPrompt({
       configuredFamily: "generic",
       service: "custom",
       model: "writer-vendor-42",
     });
 
-    expect(result).toEqual({
-      family: "none",
-      enabled: false,
+    expect(result).toMatchObject({
+      family: "generic",
+      enabled: true,
       source: "unknown",
-      warning: expect.stringContaining("save promptFamily"),
     });
   });
 
@@ -86,10 +85,39 @@ describe("model-global prompt family resolution", () => {
       source: "disabled",
     });
   });
+
+  it("selects the saved project prompt after resolving the model family", () => {
+    const result = resolveModelGlobalPrompt({
+      configuredFamily: "generic",
+      endpoint: "https://api.deepseek.com/v1",
+      model: "vendor-model",
+      customPrompts: {
+        gpt: {
+          id: "project:gpt",
+          revision: 2,
+          text: "GPT family prompt",
+        },
+        deepseek: {
+          id: "project:deepseek",
+          revision: 5,
+          text: "DeepSeek family prompt",
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      family: "deepseek",
+      assetId: "project:deepseek",
+      revision: 5,
+      source: "endpoint",
+    });
+    expect(result.renderedText).toContain("DeepSeek family prompt");
+    expect(result.renderedText).not.toContain("GPT family prompt");
+  });
 });
 
 describe("model-global prompt assets", () => {
-  it.each(["gpt", "grok", "deepseek"] as const)(
+  it.each(["gpt", "grok", "deepseek", "generic"] as const)(
     "publishes a stable, bounded and safety-preserving %s asset",
     (family) => {
       const asset = MODEL_GLOBAL_PROMPT_ASSETS[family];

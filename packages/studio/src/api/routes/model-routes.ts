@@ -1,4 +1,8 @@
-import { LogicalModelRouteSchema } from "@actalk/inkos-core";
+import {
+  LogicalModelRouteSchema,
+  ModelGlobalPromptFamilySchema,
+  ModelGlobalPromptOverrideSchema,
+} from "@actalk/inkos-core";
 import type { Hono } from "hono";
 import { ApiError } from "../errors.js";
 import { logicalModelRouteDTO } from "./model-dto.js";
@@ -16,8 +20,43 @@ export function registerModelRouteRoutes(app: Hono, store: ModelManagementStore)
     return c.json({
       revision,
       defaultRouteId: routing.defaultRouteId,
+      modelGlobalPrompts: routing.modelGlobalPrompts,
       routes: routing.routes.map((route) => logicalModelRouteDTO(route, routing.defaultRouteId)),
     }, 200, { ETag: `"${revision}"` });
+  });
+
+  app.put("/api/v1/model-global-prompts/:family", async (c) => {
+    const family = parseCoreSchema(
+      ModelGlobalPromptFamilySchema,
+      c.req.param("family"),
+    );
+    const raw = requestRecord(await c.req.json());
+    const body = {
+      revision: optionalString(raw.revision, "revision"),
+      text: optionalString(raw.text, "text") ?? "",
+    };
+    const result = await store.updateRouting(
+      revisionFromRequest(body, c.req.header("If-Match")),
+      (routing) => {
+        const text = body.text.trim();
+        if (!text) {
+          delete routing.modelGlobalPrompts[family];
+          return;
+        }
+        routing.modelGlobalPrompts[family] = parseCoreSchema(
+          ModelGlobalPromptOverrideSchema,
+          {
+            text,
+            revision: (routing.modelGlobalPrompts[family]?.revision ?? 0) + 1,
+          },
+        );
+      },
+    );
+    return c.json(
+      { ok: true, revision: result.revision },
+      200,
+      { ETag: `"${result.revision}"` },
+    );
   });
 
   app.post("/api/v1/model-routes", async (c) => {

@@ -118,13 +118,29 @@ describe("ResilientChatRuntime", () => {
     expect(backendB.requests).toHaveLength(1);
     expect(backendA.requests[0]?.body).toMatchObject({
       model: "model-a",
-      messages: original,
+      messages: [
+        {
+          role: "system",
+          content: expect.stringMatching(
+            /^<!-- inkos:model-global-prompt[\s\S]*\n\nkeep context$/,
+          ),
+        },
+        original[1],
+      ],
       temperature: 0.25,
       max_tokens: 321,
     });
     expect(backendB.requests[0]?.body).toMatchObject({
       model: "model-b",
-      messages: original,
+      messages: [
+        {
+          role: "system",
+          content: expect.stringMatching(
+            /^<!-- inkos:model-global-prompt[\s\S]*\n\nkeep context$/,
+          ),
+        },
+        original[1],
+      ],
       temperature: 0.25,
       max_tokens: 321,
     });
@@ -455,6 +471,7 @@ describe("ResilientChatRuntime", () => {
           { backendId: "backend-api", upstreamModelId: "gpt-backup" },
         ],
       }],
+      modelGlobalPrompts: {},
       defaultRouteId: "route-main",
     };
     let refreshes = 0;
@@ -645,6 +662,7 @@ describe("ResilientChatRuntime", () => {
           { backendId: "backend-api", upstreamModelId: "backup-model" },
         ],
       }],
+      modelGlobalPrompts: {},
       defaultRouteId: "route-main",
     };
     const events: RoutingEvent[] = [];
@@ -801,6 +819,7 @@ function createRouting(
             { backendId: "backend-b", upstreamModelId: "model-b" },
           ],
     }],
+    modelGlobalPrompts: {},
     defaultRouteId: "route-main",
   };
 }

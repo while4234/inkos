@@ -47,6 +47,7 @@ const EMPTY_ROUTING: ModelRoutingConfig = {
   credentials: [],
   backends: [],
   routes: [],
+  modelGlobalPrompts: {},
   defaultRouteId: null,
 };
 
@@ -328,9 +329,6 @@ export class ModelManagementStore {
           promptFamily: selectedRoute?.promptFamily ?? inferPromptFamily(input.model),
           enabled: true,
           candidates: [desiredCandidate],
-          ...(selectedRoute?.globalPrompt
-            ? { globalPrompt: selectedRoute.globalPrompt }
-            : {}),
         }));
         if (
           routing.defaultRouteId === null

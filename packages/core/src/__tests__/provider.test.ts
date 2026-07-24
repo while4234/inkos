@@ -608,12 +608,18 @@ describe("chatCompletion via pi-ai", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const firstBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
     const secondBody = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string);
-    expect(firstBody.messages).toEqual([
-      { role: "system", content: "只输出中文。" },
-      { role: "user", content: "ping" },
-    ]);
+    expect(firstBody.messages).toHaveLength(2);
+    expect(firstBody.messages[0]).toMatchObject({ role: "system" });
+    expect(firstBody.messages[0].content).toContain(
+      'inkos:model-global-prompt:generic',
+    );
+    expect(firstBody.messages[0].content).toContain("只输出中文。");
+    expect(firstBody.messages[1]).toEqual({ role: "user", content: "ping" });
     expect(secondBody.messages).toHaveLength(1);
     expect(secondBody.messages[0]).toMatchObject({ role: "user" });
+    expect(secondBody.messages[0].content).toContain(
+      'inkos:model-global-prompt:generic',
+    );
     expect(secondBody.messages[0].content).toContain("只输出中文。");
     expect(secondBody.messages[0].content).toContain("ping");
 

@@ -454,6 +454,7 @@ function routingFixture() {
       enabled: true,
       candidates: [{ backendId: "backend-openai", upstreamModelId: "gpt-route" }],
     }],
+    modelGlobalPrompts: {},
     defaultRouteId: "agent-default",
   };
 }

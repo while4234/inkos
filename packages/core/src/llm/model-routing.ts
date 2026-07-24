@@ -68,25 +68,39 @@ export const PromptFamilySchema = z.enum([
   "generic",
 ]);
 
+export const ModelGlobalPromptFamilySchema = z.enum([
+  "gpt",
+  "grok",
+  "deepseek",
+  "generic",
+]);
+
 export const ModelGlobalPromptOverrideSchema = z.object({
   text: z.string().min(1).max(32_768),
   revision: z.number().int().positive().default(1),
+}).strict();
+
+export const ModelGlobalPromptsSchema = z.object({
+  gpt: ModelGlobalPromptOverrideSchema.optional(),
+  grok: ModelGlobalPromptOverrideSchema.optional(),
+  deepseek: ModelGlobalPromptOverrideSchema.optional(),
+  generic: ModelGlobalPromptOverrideSchema.optional(),
 }).strict();
 
 export const LogicalModelRouteSchema = z.object({
   id: StableIdSchema,
   displayName: z.string().min(1),
   promptFamily: PromptFamilySchema.default("generic"),
-  globalPrompt: ModelGlobalPromptOverrideSchema.optional(),
   enabled: z.boolean().default(true),
   candidates: z.array(LogicalModelCandidateSchema).min(1, "must contain at least one candidate"),
 }).strict();
 
-export const ModelRoutingConfigSchema = z.object({
+const ModelRoutingConfigDataSchema = z.object({
   version: z.literal(MODEL_ROUTING_SCHEMA_VERSION),
   credentials: z.array(CredentialMetadataSchema),
   backends: z.array(BackendInstanceSchema),
   routes: z.array(LogicalModelRouteSchema),
+  modelGlobalPrompts: ModelGlobalPromptsSchema.default({}),
   defaultRouteId: StableIdSchema.nullable(),
 }).strict().superRefine((routing, context) => {
   addDuplicateIdIssues(routing.credentials, "credentials", context);
@@ -180,6 +194,11 @@ export const ModelRoutingConfigSchema = z.object({
   }
 });
 
+export const ModelRoutingConfigSchema = z.preprocess(
+  migrateRouteGlobalPrompts,
+  ModelRoutingConfigDataSchema,
+);
+
 export const RouteLLMOverrideSchema = z.object({
   routeId: StableIdSchema,
 }).strict();
@@ -192,6 +211,8 @@ export type ModelPriceMetadata = z.infer<typeof ModelPriceMetadataSchema>;
 export type BackendInstance = z.infer<typeof BackendInstanceSchema>;
 export type LogicalModelCandidate = z.infer<typeof LogicalModelCandidateSchema>;
 export type PromptFamily = z.infer<typeof PromptFamilySchema>;
+export type ModelGlobalPromptFamily = z.infer<typeof ModelGlobalPromptFamilySchema>;
+export type ModelGlobalPrompts = z.infer<typeof ModelGlobalPromptsSchema>;
 export type LogicalModelRoute = z.infer<typeof LogicalModelRouteSchema>;
 export type ModelRoutingConfig = z.infer<typeof ModelRoutingConfigSchema>;
 export type RouteLLMOverride = z.infer<typeof RouteLLMOverrideSchema>;
@@ -219,6 +240,58 @@ export function resolveLogicalModelRoute(
     throw new Error(`Logical model route "${routeId}" is disabled.`);
   }
   return route;
+}
+
+function migrateRouteGlobalPrompts(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.routes)) return value;
+
+  const legacyRoutes = value.routes.filter(isRecord);
+  if (!legacyRoutes.some((route) => "globalPrompt" in route)) return value;
+
+  const existingPrompts = isRecord(value.modelGlobalPrompts)
+    ? { ...value.modelGlobalPrompts }
+    : {};
+  const defaultRouteId = typeof value.defaultRouteId === "string"
+    ? value.defaultRouteId
+    : undefined;
+  const prioritizedRoutes = [...legacyRoutes].sort((left, right) => {
+    if (left.id === defaultRouteId) return -1;
+    if (right.id === defaultRouteId) return 1;
+    return 0;
+  });
+
+  for (const route of prioritizedRoutes) {
+    const family = modelGlobalPromptFamily(route.promptFamily);
+    if (!family || family in existingPrompts || !isRecord(route.globalPrompt)) {
+      continue;
+    }
+    existingPrompts[family] = route.globalPrompt;
+  }
+
+  return {
+    ...value,
+    modelGlobalPrompts: existingPrompts,
+    routes: value.routes.map((route) => {
+      if (!isRecord(route) || !("globalPrompt" in route)) return route;
+      const { globalPrompt: _legacyGlobalPrompt, ...normalizedRoute } = route;
+      return normalizedRoute;
+    }),
+  };
+}
+
+function modelGlobalPromptFamily(
+  value: unknown,
+): ModelGlobalPromptFamily | undefined {
+  return value === "gpt"
+    || value === "grok"
+    || value === "deepseek"
+    || value === "generic"
+    ? value
+    : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function addDuplicateIdIssues(

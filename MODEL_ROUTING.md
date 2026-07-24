@@ -3,7 +3,7 @@
 InkOS keeps three concerns separate:
 
 - A **logical model route** is the user-facing model choice. It owns an ordered
-  list of candidates and a `promptFamily`.
+  list of candidates and selects a `promptFamily`.
 - A **backend instance** describes a concrete provider endpoint and transport.
   It references a credential by ID and never embeds a secret.
 - A **credential reference** is non-secret metadata. Project API keys live in
@@ -11,6 +11,8 @@ InkOS keeps three concerns separate:
   user-level `~/.inkos/credentials/codex` store, and Grok OAuth credentials
   live under `~/.inkos/credentials/grok`. Login credentials never live in the
   project directory.
+- **Model-global prompts** are project-level settings keyed by model family.
+  They are independent of backend and route identities.
 
 ## Schema version and compatibility
 
@@ -55,19 +57,22 @@ fixtures.
 
 InkOS composes prompts in three separate layers:
 
-1. The **model-global prompt** is provider/model adaptation owned by the logical
-   route. `promptFamily` accepts `gpt`, `grok`, `deepseek`, or `none`. It is
-   injected once at the final `chatCompletion()` transport boundary.
+1. The **model-global prompt** is provider/model adaptation selected by the
+   logical route but stored once per project and model family.
+   `modelGlobalPrompts` accepts `gpt`, `grok`, `deepseek`, and `generic`
+   (shown as Other / Custom in Studio). A route's `promptFamily` selects one of
+   those families or `none`. The selected prompt is injected once at the final
+   `chatCompletion()` transport boundary.
 2. The **Agent/role system prompt** describes the current authoring role and
    task. It remains after the model-global prompt and is never replaced by it.
 3. A **project prompt pack** is user/project content. Its order and text remain
    part of the role/task context.
 
-Routes migrated before strict family selection may still contain `generic`.
-InkOS resolves that compatibility sentinel deterministically from a recognized
-official endpoint, then an explicit service mapping, then a normalized model
-ID. Unknown models use `none` and return diagnostic fallback metadata; save an
-explicit `promptFamily` on the route to make the choice persistent.
+For `generic`, InkOS resolves a recognized official endpoint first, then an
+explicit service mapping, then a normalized model ID. Recognized models use the
+saved GPT, Grok, or DeepSeek prompt; unknown models use the saved Other / Custom
+prompt. Legacy route-level prompts are normalized into the corresponding
+project family when the routing graph is read.
 
 Business generation defaults to model-global prompt mode `auto`. Narrow
 connectivity/provider verification calls pass
@@ -77,10 +82,10 @@ schema instructions, or user messages.
 
 Each asset has a stable non-secret ID, numeric revision, and boundary marker.
 Retry and failover attempts reuse the family/revision resolved for the logical
-route, so changing backend URL or provider transport cannot stack or change
-the prompt. Routing observers receive only family, asset ID/revision, enabled
-state, and fallback source; the full asset text is never written to trace
-events.
+route. Adding or changing a backend never creates another prompt copy, and all
+routes selecting the same family use the same project setting. Routing
+observers receive only family, asset ID/revision, enabled state, and fallback
+source; the full asset text is never written to trace events.
 
 ## Runtime failover and backend health
 
@@ -244,12 +249,14 @@ To configure two OpenAI-compatible endpoints:
    never rehydrated into the form.
 2. Create one logical route, select A then B in candidate order, provide the
    upstream model ID, and choose the route's explicit prompt family.
-3. Set that route as the default. Per-Agent routing remains under Project
+3. Optionally edit the project-level prompt once for each model family. Current
+   and future routes selecting that family use it automatically.
+4. Set that route as the default. Per-Agent routing remains under Project
    settings; route-aware overrides are stored as `{ "routeId": "..." }`.
-4. Probe both backends from the health area. Probes call the controlled
+5. Probe both backends from the health area. Probes call the controlled
    `/models` boundary and do not send a chat prompt or inject a model-global
    prompt.
-5. Run a production task against a mock or authorized provider. A quota/auth
+6. Run a production task against a mock or authorized provider. A quota/auth
    failure on A makes the Core resilient runtime select B. The task card and
    recent activity show the logical model, A → B, safe reason, and routing
    phase. Refreshing Studio restores the task summary and backend health.

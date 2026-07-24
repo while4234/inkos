@@ -40,6 +40,7 @@ function validRouting() {
         upstreamModelId: "upstream-writer",
       }],
     }],
+    modelGlobalPrompts: {},
     defaultRouteId: "route-primary",
   };
 }
@@ -51,12 +52,14 @@ describe("ModelRoutingConfigSchema", () => {
       credentials: [],
       backends: [],
       routes: [],
+      modelGlobalPrompts: {},
       defaultRouteId: null,
     })).toEqual({
       version: 1,
       credentials: [],
       backends: [],
       routes: [],
+      modelGlobalPrompts: {},
       defaultRouteId: null,
     });
   });
@@ -90,24 +93,44 @@ describe("ModelRoutingConfigSchema", () => {
     expect(ModelRoutingConfigSchema.safeParse(routing).success).toBe(false);
   });
 
-  it("persists a bounded project prompt and its monotonic revision on a route", () => {
+  it("persists bounded project prompts by model family", () => {
     const routing = validRouting();
-    Object.assign(routing.routes[0]!, {
-      globalPrompt: {
+    Object.assign(routing.modelGlobalPrompts, {
+      gpt: {
         text: "Keep names, chronology, and established facts consistent.",
         revision: 2,
       },
     });
 
-    expect(ModelRoutingConfigSchema.parse(routing).routes[0]?.globalPrompt)
+    expect(ModelRoutingConfigSchema.parse(routing).modelGlobalPrompts.gpt)
       .toEqual({
         text: "Keep names, chronology, and established facts consistent.",
         revision: 2,
       });
-    Object.assign(routing.routes[0]!, {
-      globalPrompt: { text: "", revision: 3 },
+    Object.assign(routing.modelGlobalPrompts, {
+      gpt: { text: "", revision: 3 },
     });
     expect(ModelRoutingConfigSchema.safeParse(routing).success).toBe(false);
+  });
+
+  it("migrates a legacy route prompt to its model family", () => {
+    const routing = validRouting();
+    delete (routing as { modelGlobalPrompts?: unknown }).modelGlobalPrompts;
+    Object.assign(routing.routes[0]!, {
+      promptFamily: "gpt",
+      globalPrompt: {
+        text: "Preserve the existing project canon.",
+        revision: 4,
+      },
+    });
+
+    const parsed = ModelRoutingConfigSchema.parse(routing);
+
+    expect(parsed.modelGlobalPrompts.gpt).toEqual({
+      text: "Preserve the existing project canon.",
+      revision: 4,
+    });
+    expect(parsed.routes[0]).not.toHaveProperty("globalPrompt");
   });
 
   it("parses a normalized graph and preserves candidate order", () => {

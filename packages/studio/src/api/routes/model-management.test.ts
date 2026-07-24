@@ -647,35 +647,24 @@ describe("model management API", () => {
     expect(createRoute.status).toBe(201);
     const routeRevision = (await createRoute.json() as { revision: string }).revision;
     const updatePrompt = await app.request(
-      "http://localhost/api/v1/model-routes/route-ab",
+      "http://localhost/api/v1/model-global-prompts/gpt",
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           revision: routeRevision,
-          route: {
-            id: "route-ab",
-            displayName: "Writer A/B",
-            promptFamily: "gpt",
-            globalPrompt: {
-              text: "Preserve project canon across every backend attempt.",
-              revision: 1,
-            },
-            enabled: true,
-            candidates: [
-              { backendId: "backend-a", upstreamModelId: "gpt-fixture" },
-              { backendId: "backend-b", upstreamModelId: "gpt-fixture" },
-            ],
-          },
+          text: "Preserve project canon across every backend attempt.",
         }),
       },
     );
     expect(updatePrompt.status).toBe(200);
 
     const routes = await json<{
+      modelGlobalPrompts: {
+        gpt?: { text: string; revision: number };
+      };
       routes: Array<{
         id: string;
-        globalPrompt?: { text: string; revision: number };
         candidates: Array<{ backendId: string }>;
       }>;
     }>(
@@ -685,10 +674,11 @@ describe("model management API", () => {
     const route = routes.routes.find((candidate) => candidate.id === "route-ab");
     expect(route?.candidates.map((candidate) => candidate.backendId))
       .toEqual(["backend-a", "backend-b"]);
-    expect(route?.globalPrompt).toEqual({
+    expect(routes.modelGlobalPrompts.gpt).toEqual({
       text: "Preserve project canon across every backend attempt.",
       revision: 1,
     });
+    expect(route).not.toHaveProperty("globalPrompt");
     const persisted = await readFile(join(root, "inkos.json"), "utf-8");
     expect(persisted).not.toContain(SECRET);
     expect(persisted).not.toContain("fixture-backend-b-key-67890");

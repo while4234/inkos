@@ -147,6 +147,16 @@ export interface ApiErrorResponse {
 
 export type StudioCredentialKind = "api_key" | "codex" | "grok_oauth";
 export type StudioPromptFamily = "gpt" | "grok" | "deepseek" | "none" | "generic";
+export type StudioModelGlobalPromptFamily = Exclude<StudioPromptFamily, "none">;
+
+export interface ModelGlobalPromptDTO {
+  readonly text: string;
+  readonly revision: number;
+}
+
+export type ModelGlobalPromptsDTO = Readonly<Partial<
+  Record<StudioModelGlobalPromptFamily, ModelGlobalPromptDTO>
+>>;
 
 export interface CredentialStatusDTO {
   readonly id: string;
@@ -246,10 +256,6 @@ export interface LogicalModelRouteDTO {
   readonly id: string;
   readonly displayName: string;
   readonly promptFamily: StudioPromptFamily;
-  readonly globalPrompt?: {
-    readonly text: string;
-    readonly revision: number;
-  };
   readonly enabled: boolean;
   readonly candidates: ReadonlyArray<LogicalModelCandidateDTO>;
   readonly isDefault: boolean;

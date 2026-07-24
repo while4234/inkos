@@ -441,6 +441,7 @@ describe("PipelineRunner", () => {
               upstreamModelId: "writer-model",
             }],
           }],
+          modelGlobalPrompts: {},
           defaultRouteId: "route-writer",
         },
       },
@@ -513,6 +514,7 @@ describe("PipelineRunner", () => {
           upstreamModelId: "base-model",
         }],
       }],
+      modelGlobalPrompts: {},
       defaultRouteId: "route-default",
     };
     const runner = new PipelineRunner({

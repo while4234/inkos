@@ -1,10 +1,15 @@
 import type { LLMMessage } from "./provider.js";
-import type { PromptFamily } from "./model-routing.js";
+import type {
+  ModelGlobalPromptFamily,
+  ModelGlobalPrompts,
+  PromptFamily,
+} from "./model-routing.js";
 import { DEEPSEEK_MODEL_GLOBAL_PROMPT_TEXT } from "./model-global-prompts/deepseek.js";
+import { GENERIC_MODEL_GLOBAL_PROMPT_TEXT } from "./model-global-prompts/generic.js";
 import { GPT_MODEL_GLOBAL_PROMPT_TEXT } from "./model-global-prompts/gpt.js";
 import { GROK_MODEL_GLOBAL_PROMPT_TEXT } from "./model-global-prompts/grok.js";
 
-export type ResolvedPromptFamily = Exclude<PromptFamily, "generic">;
+export type ResolvedPromptFamily = PromptFamily;
 export type ModelGlobalPromptMode = "auto" | "disabled";
 export type PromptFamilySource =
   | "explicit"
@@ -45,6 +50,9 @@ export interface ResolveModelGlobalPromptInput {
   readonly model?: string;
   readonly mode?: ModelGlobalPromptMode;
   readonly customPrompt?: ModelGlobalPromptOverride;
+  readonly customPrompts?: Readonly<Partial<
+    Record<ModelGlobalPromptFamily, ModelGlobalPromptOverride>
+  >>;
 }
 
 export interface ModelGlobalPromptTraceMetadata {
@@ -65,12 +73,16 @@ export interface ModelGlobalPromptApplication<TMessage extends PromptCompatibleM
   readonly trace: ModelGlobalPromptTraceMetadata;
 }
 
+export type ModelGlobalPromptOverrides = Readonly<Partial<
+  Record<ModelGlobalPromptFamily, ModelGlobalPromptOverride>
+>>;
+
 const PROMPT_MARKER_ID = "inkos:model-global-prompt";
 const PROMPT_END_MARKER = `<!-- /${PROMPT_MARKER_ID} -->`;
 const MARKED_PROMPT_PREFIX = new RegExp(
   `^\\s*<!-- ${PROMPT_MARKER_ID.replaceAll(":", "\\:")}\\s+` +
   `id="[a-z0-9:._-]+"\\s+` +
-  `family="(?:gpt|grok|deepseek)"\\s+revision="[0-9]+"\\s*-->` +
+  `family="(?:gpt|grok|deepseek|generic)"\\s+revision="[0-9]+"\\s*-->` +
   `[\\s\\S]*?${PROMPT_END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`,
 );
 
@@ -94,6 +106,7 @@ const ASSETS = [
   createAsset("gpt", 1, GPT_MODEL_GLOBAL_PROMPT_TEXT),
   createAsset("grok", 1, GROK_MODEL_GLOBAL_PROMPT_TEXT),
   createAsset("deepseek", 1, DEEPSEEK_MODEL_GLOBAL_PROMPT_TEXT),
+  createAsset("generic", 1, GENERIC_MODEL_GLOBAL_PROMPT_TEXT),
 ] as const;
 
 export const MODEL_GLOBAL_PROMPT_ASSETS: Readonly<Record<
@@ -124,32 +137,62 @@ export function resolveModelGlobalPrompt(
 
   const configured = input.configuredFamily ?? "generic";
   if (configured !== "generic") {
-    return resolutionForFamily(configured, "explicit", input.customPrompt);
+    return resolutionForFamily(
+      configured,
+      "explicit",
+      configured === "none"
+        ? undefined
+        : customPromptForFamily(input, configured),
+    );
   }
 
   const endpointFamily = familyForEndpoint(input.endpoint);
   if (endpointFamily) {
-    return resolutionForFamily(endpointFamily, "endpoint", input.customPrompt);
+    return resolutionForFamily(
+      endpointFamily,
+      "endpoint",
+      customPromptForFamily(input, endpointFamily),
+    );
   }
 
   const serviceFamily = SERVICE_FAMILIES[normalizeIdentifier(input.service)];
   if (serviceFamily) {
-    return resolutionForFamily(serviceFamily, "service", input.customPrompt);
+    return resolutionForFamily(
+      serviceFamily,
+      "service",
+      customPromptForFamily(input, serviceFamily),
+    );
   }
 
   const modelFamily = familyForNormalizedModel(input.model);
   if (modelFamily) {
-    return resolutionForFamily(modelFamily, "model", input.customPrompt);
+    return resolutionForFamily(
+      modelFamily,
+      "model",
+      customPromptForFamily(input, modelFamily),
+    );
   }
 
-  const model = input.model?.trim() || "unknown";
-  return {
-    family: "none",
-    enabled: false,
-    source: "unknown",
-    warning: `No model-global prompt family is configured for model "${model}". ` +
-      "The request will continue without a model-global prompt; save promptFamily on the logical route.",
-  };
+  return resolutionForFamily(
+    "generic",
+    "unknown",
+    customPromptForFamily(input, "generic"),
+  );
+}
+
+export function modelGlobalPromptOverridesFromConfig(
+  prompts: ModelGlobalPrompts,
+): ModelGlobalPromptOverrides {
+  return Object.fromEntries(
+    Object.entries(prompts).map(([family, prompt]) => [
+      family,
+      {
+        id: `project:${family}`,
+        revision: prompt.revision,
+        text: prompt.text,
+      },
+    ]),
+  ) as ModelGlobalPromptOverrides;
 }
 
 export function applyModelGlobalPrompt<TMessage extends PromptCompatibleMessage>(
@@ -304,6 +347,13 @@ function resolutionForFamily(
     assetId: asset.id,
     revision: asset.revision,
   };
+}
+
+function customPromptForFamily(
+  input: ResolveModelGlobalPromptInput,
+  family: ModelGlobalPromptFamily,
+): ModelGlobalPromptOverride | undefined {
+  return input.customPrompts?.[family] ?? input.customPrompt;
 }
 
 function normalizeIdentifier(value: string | undefined): string {

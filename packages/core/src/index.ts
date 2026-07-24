@@ -498,7 +498,9 @@ export {
   BackendInstanceSchema,
   LogicalModelCandidateSchema,
   PromptFamilySchema,
+  ModelGlobalPromptFamilySchema,
   ModelGlobalPromptOverrideSchema,
+  ModelGlobalPromptsSchema,
   LogicalModelRouteSchema,
   ModelRoutingConfigSchema,
   RouteLLMOverrideSchema,
@@ -512,6 +514,8 @@ export {
   type BackendInstance,
   type LogicalModelCandidate,
   type PromptFamily,
+  type ModelGlobalPromptFamily,
+  type ModelGlobalPrompts,
   type LogicalModelRoute,
   type ModelRoutingConfig,
   type RouteLLMOverride,
@@ -519,6 +523,7 @@ export {
 export {
   MODEL_GLOBAL_PROMPT_ASSETS,
   resolveModelGlobalPrompt,
+  modelGlobalPromptOverridesFromConfig,
   applyModelGlobalPrompt,
   applyModelGlobalPromptToLLMMessages,
   stripKnownModelGlobalPromptPrefixes,
@@ -535,6 +540,7 @@ export {
   type ModelGlobalPromptTraceMetadata,
   type PromptCompatibleMessage,
   type ModelGlobalPromptApplication,
+  type ModelGlobalPromptOverrides,
 } from "./llm/model-global-prompt.js";
 export {
   CredentialResolver,

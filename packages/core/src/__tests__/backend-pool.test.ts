@@ -87,6 +87,7 @@ describe("BackendPool", () => {
         enabled: true,
         candidates: [{ backendId: "backend-grok", upstreamModelId: "grok-4" }],
       }],
+      modelGlobalPrompts: {},
       defaultRouteId: "route-main",
     };
     const pool = new BackendPool(routing, credentials, health);
@@ -139,6 +140,7 @@ function createRouting(): ModelRoutingConfig {
         { backendId: "backend-not-configured", upstreamModelId: "missing-backend-model" },
       ],
     }],
+    modelGlobalPrompts: {},
     defaultRouteId: "route-main",
   };
 }

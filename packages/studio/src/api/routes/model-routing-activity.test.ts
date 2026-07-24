@@ -68,6 +68,7 @@ describe("Studio production routing observer", () => {
           },
         ],
       }],
+      modelGlobalPrompts: {},
       defaultRouteId: "route-ab",
     };
     const activity = new StudioRoutingActivity();

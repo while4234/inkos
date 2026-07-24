@@ -90,6 +90,26 @@ describe("ModelRoutingConfigSchema", () => {
     expect(ModelRoutingConfigSchema.safeParse(routing).success).toBe(false);
   });
 
+  it("persists a bounded project prompt and its monotonic revision on a route", () => {
+    const routing = validRouting();
+    Object.assign(routing.routes[0]!, {
+      globalPrompt: {
+        text: "Keep names, chronology, and established facts consistent.",
+        revision: 2,
+      },
+    });
+
+    expect(ModelRoutingConfigSchema.parse(routing).routes[0]?.globalPrompt)
+      .toEqual({
+        text: "Keep names, chronology, and established facts consistent.",
+        revision: 2,
+      });
+    Object.assign(routing.routes[0]!, {
+      globalPrompt: { text: "", revision: 3 },
+    });
+    expect(ModelRoutingConfigSchema.safeParse(routing).success).toBe(false);
+  });
+
   it("parses a normalized graph and preserves candidate order", () => {
     const routing = validRouting();
     routing.routes[0]!.candidates.push({

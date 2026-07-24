@@ -3646,81 +3646,55 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       return c.json({ error: "Display name, Base URL, and selected model are required." }, 400);
     }
     const secrets = await loadSecrets(root);
-    const apiKey = secrets.services[service]?.apiKey ?? "";
+    let apiKey = secrets.services[service]?.apiKey ?? "";
     const backendId = stableRoutingId("backend", `studio-provider\0${service}`);
     const credentialId = stableRoutingId("credential", `studio-provider\0${service}`);
     const routeId = stableRoutingId("route", `studio-provider\0${service}`);
-    let state = await modelManagement.store.read();
-    const existing = state.routing.backends.find((item) => item.id === backendId);
-    const backend = {
-      id: backendId,
-      displayName,
-      service,
-      provider: "custom" as const,
-      baseUrl,
-      credentialRef: {
-        id: existing?.credentialRef.id ?? credentialId,
-        kind: "api_key" as const,
-      },
-      enabled: body.enabled ?? true,
-      transport: {
-        apiFormat: body.apiFormat ?? "chat",
-        stream: body.stream ?? true,
-      },
-    };
-    if (existing) {
-      state = await modelManagement.store.updateRouting(state.revision, (routing) => {
-        const index = routing.backends.findIndex((item) => item.id === backendId);
-        routing.backends[index] = backend;
-      });
-      if (apiKey) {
-        state = await modelManagement.store.setApiKey(
-          state.revision,
-          backend.credentialRef.id,
-          apiKey,
-        );
-      }
-    } else {
-      if (!apiKey) {
-        return c.json({ error: "Enter the API Key once before creating the unified backend." }, 409);
-      }
-      state = await modelManagement.store.createBackend(
-        state.revision,
-        backend,
-        {
-          id: credentialId,
-          kind: "api_key",
-          label: `${displayName} API Key`,
-          scope: "project",
-        },
-        apiKey,
-      );
+    const current = await modelManagement.store.read();
+    const existingBackend = current.routing.backends.find((backend) =>
+      backend.service === service && backend.credentialRef.kind === "api_key"
+    );
+    if (!apiKey && existingBackend) {
+      const normalizedSecrets = await modelManagement.store.readSecrets();
+      apiKey = normalizedSecrets.credentials?.[existingBackend.credentialRef.id]?.apiKey ?? "";
     }
-    state = await modelManagement.store.updateRouting(state.revision, (routing) => {
-      const routeIndex = routing.routes.findIndex((item) => item.id === routeId);
-      if (body.includeInFailover ?? true) {
-        const route = {
-          id: routeId,
-          displayName: `${displayName} route`,
-          promptFamily: "generic" as const,
-          enabled: true,
-          candidates: [{ backendId, upstreamModelId: model }],
-        };
-        if (routeIndex >= 0) routing.routes[routeIndex] = route;
-        else routing.routes.push(route);
-        if (routing.defaultRouteId === null) routing.defaultRouteId = routeId;
-      } else if (routeIndex >= 0) {
-        routing.routes.splice(routeIndex, 1);
-        if (routing.defaultRouteId === routeId) {
-          routing.defaultRouteId = routing.routes.find((item) => item.enabled)?.id ?? null;
-        }
-      }
+    if (!apiKey && !existingBackend) {
+      return c.json({ error: "Enter the API Key once before creating the unified backend." }, 409);
+    }
+    if (!apiKey) {
+      return c.json({ error: "The saved Custom API credential is missing. Enter the API Key again." }, 409);
+    }
+    const state = await modelManagement.store.upsertCustomServiceBackend({
+      expectedRevision: current.revision,
+      service,
+      displayName,
+      baseUrl,
+      model,
+      apiKey,
+      backendId,
+      credentialId,
+      routeId,
+      apiFormat: body.apiFormat ?? "chat",
+      stream: body.stream ?? true,
+      enabled: body.enabled ?? true,
+      includeInFailover: body.includeInFailover ?? true,
     });
     return c.json({
       ok: true,
       revision: state.revision,
-      backendId,
-      routeId: (body.includeInFailover ?? true) ? routeId : null,
+      backendId: state.routing.backends.find((backend) =>
+        backend.service === service && backend.credentialRef.kind === "api_key"
+      )?.id ?? backendId,
+      routeId: (body.includeInFailover ?? true)
+        ? state.routing.routes.find((route) =>
+          route.candidates.some((candidate) =>
+            state.routing.backends.some((backend) =>
+              backend.service === service && backend.id === candidate.backendId
+            )
+            && candidate.upstreamModelId === model
+          )
+        )?.id ?? routeId
+        : null,
     });
   });
 

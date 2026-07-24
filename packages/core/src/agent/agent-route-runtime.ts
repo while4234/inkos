@@ -839,6 +839,13 @@ function resolveRoutePrompt(
     endpoint: firstBackend?.baseUrl,
     service: firstBackend?.service,
     model: firstCandidate?.upstreamModelId,
+    ...(route.globalPrompt ? {
+      customPrompt: {
+        id: `project:${route.id}`,
+        revision: route.globalPrompt.revision,
+        text: route.globalPrompt.text,
+      },
+    } : {}),
   });
 }
 

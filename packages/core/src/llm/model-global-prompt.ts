@@ -28,7 +28,14 @@ export interface ModelGlobalPromptResolution {
   readonly source: PromptFamilySource;
   readonly assetId?: string;
   readonly revision?: number;
+  readonly renderedText?: string;
   readonly warning?: string;
+}
+
+export interface ModelGlobalPromptOverride {
+  readonly id: string;
+  readonly revision: number;
+  readonly text: string;
 }
 
 export interface ResolveModelGlobalPromptInput {
@@ -37,6 +44,7 @@ export interface ResolveModelGlobalPromptInput {
   readonly service?: string;
   readonly model?: string;
   readonly mode?: ModelGlobalPromptMode;
+  readonly customPrompt?: ModelGlobalPromptOverride;
 }
 
 export interface ModelGlobalPromptTraceMetadata {
@@ -61,8 +69,8 @@ const PROMPT_MARKER_ID = "inkos:model-global-prompt";
 const PROMPT_END_MARKER = `<!-- /${PROMPT_MARKER_ID} -->`;
 const MARKED_PROMPT_PREFIX = new RegExp(
   `^\\s*<!-- ${PROMPT_MARKER_ID.replaceAll(":", "\\:")}\\s+` +
-  `id="${PROMPT_MARKER_ID.replaceAll(":", "\\:")}:(gpt|grok|deepseek)"\\s+` +
-  `family="\\1"\\s+revision="[0-9]+"\\s*-->` +
+  `id="[a-z0-9:._-]+"\\s+` +
+  `family="(?:gpt|grok|deepseek)"\\s+revision="[0-9]+"\\s*-->` +
   `[\\s\\S]*?${PROMPT_END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`,
 );
 
@@ -116,17 +124,23 @@ export function resolveModelGlobalPrompt(
 
   const configured = input.configuredFamily ?? "generic";
   if (configured !== "generic") {
-    return resolutionForFamily(configured, "explicit");
+    return resolutionForFamily(configured, "explicit", input.customPrompt);
   }
 
   const endpointFamily = familyForEndpoint(input.endpoint);
-  if (endpointFamily) return resolutionForFamily(endpointFamily, "endpoint");
+  if (endpointFamily) {
+    return resolutionForFamily(endpointFamily, "endpoint", input.customPrompt);
+  }
 
   const serviceFamily = SERVICE_FAMILIES[normalizeIdentifier(input.service)];
-  if (serviceFamily) return resolutionForFamily(serviceFamily, "service");
+  if (serviceFamily) {
+    return resolutionForFamily(serviceFamily, "service", input.customPrompt);
+  }
 
   const modelFamily = familyForNormalizedModel(input.model);
-  if (modelFamily) return resolutionForFamily(modelFamily, "model");
+  if (modelFamily) {
+    return resolutionForFamily(modelFamily, "model", input.customPrompt);
+  }
 
   const model = input.model?.trim() || "unknown";
   return {
@@ -143,11 +157,12 @@ export function applyModelGlobalPrompt<TMessage extends PromptCompatibleMessage>
   resolution: ModelGlobalPromptResolution,
 ): ModelGlobalPromptApplication<TMessage> {
   const stripped = messages.map((message) => stripPromptFromMessage(message));
-  const asset = resolution.enabled && resolution.family !== "none"
+  const builtInAsset = resolution.enabled && resolution.family !== "none"
     ? MODEL_GLOBAL_PROMPT_ASSETS[resolution.family]
     : undefined;
+  const renderedPrompt = resolution.renderedText ?? builtInAsset?.renderedText;
 
-  if (!asset) {
+  if (!renderedPrompt) {
     return {
       messages: stripped,
       trace: toModelGlobalPromptTrace(resolution),
@@ -158,7 +173,7 @@ export function applyModelGlobalPrompt<TMessage extends PromptCompatibleMessage>
   if (firstSystemIndex < 0) {
     const inserted = {
       role: "system",
-      content: asset.renderedText,
+      content: renderedPrompt,
     } as TMessage;
     return {
       messages: [inserted, ...stripped],
@@ -170,7 +185,7 @@ export function applyModelGlobalPrompt<TMessage extends PromptCompatibleMessage>
   if (!canPrependToContent(firstSystemMessage.content)) {
     const inserted = {
       role: "system",
-      content: asset.renderedText,
+      content: renderedPrompt,
     } as TMessage;
     return {
       messages: [
@@ -186,7 +201,7 @@ export function applyModelGlobalPrompt<TMessage extends PromptCompatibleMessage>
     messages: stripped.map((message, index) => index === firstSystemIndex
       ? {
           ...message,
-          content: prependPromptToContent(message.content, asset.renderedText),
+          content: prependPromptToContent(message.content, renderedPrompt),
         } as TMessage
       : message),
     trace: toModelGlobalPromptTrace(resolution),
@@ -258,8 +273,29 @@ export function toModelGlobalPromptTrace(
 function resolutionForFamily(
   family: ResolvedPromptFamily,
   source: PromptFamilySource,
+  customPrompt?: ModelGlobalPromptOverride,
 ): ModelGlobalPromptResolution {
   if (family === "none") return { family, enabled: false, source };
+  if (customPrompt?.text.trim()) {
+    const assetId = customPrompt.id.trim().toLowerCase()
+      .replace(/[^a-z0-9:._-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      || "project:custom";
+    const revision = Number.isSafeInteger(customPrompt.revision)
+      && customPrompt.revision > 0
+      ? customPrompt.revision
+      : 1;
+    const safeText = customPrompt.text.replaceAll(PROMPT_END_MARKER, "").trim();
+    const startMarker = `<!-- ${PROMPT_MARKER_ID} id="${assetId}" family="${family}" revision="${revision}" -->`;
+    return {
+      family,
+      enabled: true,
+      source,
+      assetId,
+      revision,
+      renderedText: `${startMarker}\n${safeText}\n${PROMPT_END_MARKER}`,
+    };
+  }
   const asset = MODEL_GLOBAL_PROMPT_ASSETS[family];
   return {
     family,

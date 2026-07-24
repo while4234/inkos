@@ -138,6 +138,38 @@ describe("model-global prompt injection", () => {
     ]);
   });
 
+  it("uses the saved route prompt with a safe revision and remains idempotent", () => {
+    const custom = resolveModelGlobalPrompt({
+      configuredFamily: "deepseek",
+      customPrompt: {
+        id: "project:route-writer",
+        text: "Always preserve established character continuity.",
+        revision: 3,
+      },
+    });
+    const first = applyModelGlobalPrompt([
+      { role: "system", content: "role prompt" },
+      { role: "user", content: "write chapter" },
+    ], custom);
+    const second = applyModelGlobalPrompt(first.messages, custom);
+    const system = String(second.messages[0]?.content);
+
+    expect(second.messages).toEqual(first.messages);
+    expect(countModelGlobalPromptMarkers(system)).toBe(1);
+    expect(system).toContain('id="project:route-writer"');
+    expect(system).toContain('revision="3"');
+    expect(system).toContain("Always preserve established character continuity.");
+    expect(custom).toMatchObject({
+      assetId: "project:route-writer",
+      revision: 3,
+      enabled: true,
+    });
+    expect(JSON.stringify({
+      assetId: custom.assetId,
+      revision: custom.revision,
+    })).not.toContain("character continuity");
+  });
+
   it("strips stacked current/older marked revisions before applying the target", () => {
     const current = MODEL_GLOBAL_PROMPT_ASSETS.gpt.renderedText;
     const old = current
@@ -246,14 +278,14 @@ describe("model-global prompt injection", () => {
     )).toBe("role prompt");
   });
 
-  it("does not strip a marker that is not a known InkOS family asset", () => {
-    const businessPrompt = [
+  it("strips a previously injected project-owned route marker", () => {
+    const projectPrompt = [
       '<!-- inkos:model-global-prompt id="project:custom" family="gpt" revision="1" -->',
       "project-owned content",
       "<!-- /inkos:model-global-prompt -->",
     ].join("\n");
 
-    expect(stripKnownModelGlobalPromptPrefixes(businessPrompt)).toBe(businessPrompt);
+    expect(stripKnownModelGlobalPromptPrefixes(projectPrompt)).toBe("");
   });
 });
 

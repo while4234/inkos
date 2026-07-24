@@ -15,7 +15,6 @@ import type {
   BackendInstanceDTO,
   CodexDiscoveryCandidateDTO,
   CredentialStatusDTO,
-  GrokOAuthConfigurationStatusDTO,
   GrokOAuthLoginStartDTO,
   LogicalModelRouteDTO,
 } from "../shared/contracts";
@@ -31,7 +30,6 @@ interface ViewState {
   readonly backends: BackendInstanceDTO[];
   readonly routes: LogicalModelRouteDTO[];
   readonly codexCandidates: CodexDiscoveryCandidateDTO[];
-  readonly grokConfig: GrokOAuthConfigurationStatusDTO;
 }
 
 interface ModelOption {
@@ -65,17 +63,13 @@ export function CredentialServiceDetailPage({
   const [error, setError] = useState("");
   const [grokLogin, setGrokLogin] = useState<GrokOAuthLoginStartDTO | null>(null);
   const [grokCallback, setGrokCallback] = useState("");
-  const [grokIssuer, setGrokIssuer] = useState("");
-  const [grokClientId, setGrokClientId] = useState("");
-  const [grokRedirectUri, setGrokRedirectUri] = useState("");
 
   const reload = useCallback(async () => {
-    const [backendPayload, authPayload, routePayload, discoveryPayload, grokConfig] = await Promise.all([
+    const [backendPayload, authPayload, routePayload, discoveryPayload] = await Promise.all([
       fetchJson<{ revision: string; backends: BackendInstanceDTO[] }>("/model-backends"),
       fetchJson<{ credentials: CredentialStatusDTO[] }>("/model-auth"),
       fetchJson<{ revision: string; routes: LogicalModelRouteDTO[] }>("/model-routes"),
       fetchJson<{ candidates: CodexDiscoveryCandidateDTO[] }>("/model-auth/codex/discovery"),
-      fetchJson<GrokOAuthConfigurationStatusDTO>("/model-auth/grok/config"),
     ]);
     const next: ViewState = {
       revision: routePayload.revision,
@@ -83,14 +77,8 @@ export function CredentialServiceDetailPage({
       backends: backendPayload.backends,
       routes: routePayload.routes,
       codexCandidates: discoveryPayload.candidates,
-      grokConfig,
     };
     setView(next);
-    if (!isCodex) {
-      setGrokIssuer((current) => current || grokConfig.issuer || "");
-      setGrokRedirectUri((current) => current || grokConfig.redirectUri
-        || `http://127.0.0.1:${window.location.port}/api/v1/model-auth/grok/callback`);
-    }
     const existingBackend = backendPayload.backends.find((item) =>
       item.service === service && item.credential.kind === kind);
     if (existingBackend) {
@@ -107,7 +95,7 @@ export function CredentialServiceDetailPage({
       const firstCredential = authPayload.credentials.find((item) => item.kind === kind);
       if (firstCredential) setCredentialId(firstCredential.id);
     }
-  }, [isCodex, kind, service]);
+  }, [kind, service]);
 
   useEffect(() => {
     void reload().catch((reason) => {
@@ -164,9 +152,6 @@ export function CredentialServiceDetailPage({
     item.service === service && item.credential.kind === kind);
   const selectedCredential = credentials.find((item) => item.id === credentialId);
   const tested = verifiedFingerprint === `${credentialId}\0${model}`;
-  const grokConfigReady = Boolean(view?.grokConfig.configured)
-    || Boolean(grokIssuer.trim() && grokClientId.trim() && grokRedirectUri.trim());
-
   const run = async (name: string, operation: () => Promise<void>) => {
     setBusy(name);
     setError("");
@@ -218,26 +203,28 @@ export function CredentialServiceDetailPage({
     await reload();
   });
 
-  const startGrokLogin = () => run("login", async () => {
-    const login = await fetchJson<GrokOAuthLoginStartDTO>("/model-auth/grok/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        revision: view?.revision,
-        credentialId: credentialId.trim(),
-        label: credentialLabel.trim(),
-        ...(!view?.grokConfig.configured ? {
-          oauthConfig: {
-            issuer: grokIssuer.trim(),
-            clientId: grokClientId.trim(),
-            redirectUri: grokRedirectUri.trim(),
-          },
-        } : {}),
-      }),
+  const startGrokLogin = () => {
+    const popup = window.open("about:blank", "inkos-grok-oauth");
+    if (popup) popup.opener = null;
+    return run("login", async () => {
+      try {
+        const login = await fetchJson<GrokOAuthLoginStartDTO>("/model-auth/grok/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            revision: view?.revision,
+            credentialId: credentialId.trim(),
+            label: credentialLabel.trim(),
+          }),
+        });
+        if (popup) popup.location.replace(login.authorizationUrl);
+        setGrokLogin(login);
+      } catch (error) {
+        popup?.close();
+        throw error;
+      }
     });
-    window.open(login.authorizationUrl, "_blank", "noopener,noreferrer");
-    setGrokLogin({ ...login, authorizationUrl: "" });
-  });
+  };
 
   const completeGrokLogin = () => run("login", async () => {
     if (!grokLogin) return;
@@ -405,25 +392,17 @@ export function CredentialServiceDetailPage({
           </>
         ) : (
           <>
-            {!view.grokConfig.configured && (
-              <div className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
-                <p className="text-sm text-amber-700">
-                  {tr("首次登录需要填写 Grok OIDC 应用信息；这些字段不包含 Token。", "First login needs the Grok OIDC application settings; these fields do not contain tokens.")}
-                </p>
-                <div className="grid gap-3">
-                  <label className="space-y-1 text-xs">Issuer<input value={grokIssuer} onChange={(event) => setGrokIssuer(event.target.value)} placeholder="https://..." className={fieldClass} /></label>
-                  <label className="space-y-1 text-xs">Client ID<input value={grokClientId} onChange={(event) => setGrokClientId(event.target.value)} className={fieldClass} /></label>
-                  <label className="space-y-1 text-xs">Redirect URI<input value={grokRedirectUri} onChange={(event) => setGrokRedirectUri(event.target.value)} className={fieldClass} /></label>
-                </div>
-              </div>
-            )}
-            <button disabled={!grokConfigReady || Boolean(busy)} onClick={() => void startGrokLogin()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm text-primary-foreground disabled:opacity-50">
+            <p className="rounded-xl border border-border/50 bg-muted/20 p-3 text-sm text-muted-foreground">
+              {tr("点击后将直接打开 Grok 授权页，无需填写 OAuth 开发者参数。", "Click to open Grok authorization directly. No OAuth developer settings are required.")}
+            </p>
+            <button disabled={!credentialId.trim() || !credentialLabel.trim() || Boolean(busy)} onClick={() => void startGrokLogin()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm text-primary-foreground disabled:opacity-50">
               {busy === "login" ? <Loader2 className="animate-spin" size={15} /> : <LogIn size={15} />}{tr("打开 Grok 登录", "Open Grok login")}
             </button>
             {grokLogin && (
               <div className="space-y-2 rounded-xl border border-border/50 p-3">
-                <p className="text-xs text-muted-foreground">{tr("浏览器完成后会自动回到此页；也可粘贴完整回调 URL。", "The page updates automatically after browser login; you may also paste the full callback URL.")}</p>
-                <div className="flex gap-2"><input value={grokCallback} onChange={(event) => setGrokCallback(event.target.value)} placeholder="http://127.0.0.1:.../callback?code=..." className={fieldClass} /><button disabled={!grokCallback.trim()} onClick={() => void completeGrokLogin()} className="shrink-0 rounded-xl border px-3 text-sm disabled:opacity-40">{tr("完成", "Complete")}</button></div>
+                <p className="text-xs text-muted-foreground">{tr("授权完成后会自动确认。如果浏览器未自动回传，粘贴最终回调 URL 或包含 code 与 state 的查询串。", "Authorization is confirmed automatically. If the browser does not return automatically, paste the final callback URL or the query string containing code and state.")}</p>
+                <a href={grokLogin.authorizationUrl} target="_blank" rel="noopener noreferrer" className="inline-flex rounded-xl border px-3 py-2 text-sm text-primary">{tr("重新打开 Grok 授权页", "Open Grok authorization page again")}</a>
+                <div className="flex gap-2"><input type="password" autoComplete="off" value={grokCallback} onChange={(event) => setGrokCallback(event.target.value)} placeholder="?code=...&state=..." className={fieldClass} /><button disabled={!grokCallback.trim()} onClick={() => void completeGrokLogin()} className="shrink-0 rounded-xl border px-3 text-sm disabled:opacity-40">{tr("确认回调", "Confirm callback")}</button></div>
               </div>
             )}
           </>

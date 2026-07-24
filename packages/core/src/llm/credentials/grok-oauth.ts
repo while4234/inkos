@@ -19,6 +19,12 @@ const STABLE_ID = /^[a-z0-9][a-z0-9._:-]*$/u;
 const MAX_OAUTH_RESPONSE_BYTES = 1 << 20;
 export const GROK_REFRESH_SKEW_MS = 120_000;
 export const GROK_LOGIN_SESSION_TTL_MS = 10 * 60_000;
+export const GROK_NATIVE_OAUTH_CONFIG: GrokOAuthConfig = Object.freeze({
+  issuer: "https://auth.x.ai",
+  clientId: "b1a00492-073a-47ea-816f-4c329264a828",
+  redirectUri: "http://127.0.0.1:56121/callback",
+  scope: "openid profile email offline_access grok-cli:access api:access",
+});
 
 export interface GrokOAuthConfig {
   readonly issuer: string;
@@ -166,18 +172,14 @@ export function grokOAuthConfigFromEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): Partial<GrokOAuthConfig> {
   return {
-    ...(env.INKOS_GROK_OAUTH_ISSUER?.trim()
-      ? { issuer: env.INKOS_GROK_OAUTH_ISSUER.trim() }
-      : {}),
-    ...(env.INKOS_GROK_OAUTH_CLIENT_ID?.trim()
-      ? { clientId: env.INKOS_GROK_OAUTH_CLIENT_ID.trim() }
-      : {}),
-    ...(env.INKOS_GROK_OAUTH_REDIRECT_URI?.trim()
-      ? { redirectUri: env.INKOS_GROK_OAUTH_REDIRECT_URI.trim() }
-      : {}),
-    ...(env.INKOS_GROK_OAUTH_SCOPE?.trim()
-      ? { scope: env.INKOS_GROK_OAUTH_SCOPE.trim() }
-      : {}),
+    issuer: env.INKOS_GROK_OAUTH_ISSUER?.trim()
+      || GROK_NATIVE_OAUTH_CONFIG.issuer,
+    clientId: env.INKOS_GROK_OAUTH_CLIENT_ID?.trim()
+      || GROK_NATIVE_OAUTH_CONFIG.clientId,
+    redirectUri: env.INKOS_GROK_OAUTH_REDIRECT_URI?.trim()
+      || GROK_NATIVE_OAUTH_CONFIG.redirectUri,
+    scope: env.INKOS_GROK_OAUTH_SCOPE?.trim()
+      || GROK_NATIVE_OAUTH_CONFIG.scope,
   };
 }
 
@@ -1166,6 +1168,18 @@ function parseCallbackInput(
       "Grok callback input is empty or too large.",
     );
   }
+  if (
+    trimmed.startsWith("?")
+    || (!trimmed.includes("://") && trimmed.includes("="))
+  ) {
+    const expected = new URL(expectedRedirectUri);
+    const query = trimmed.startsWith("?") ? trimmed : `?${trimmed}`;
+    return parseCallbackUrl(
+      new URL(query, expected),
+      expected,
+      expectedState,
+    );
+  }
   if (!trimmed.includes("://")) {
     if (!/^[A-Za-z0-9._~-]+$/u.test(trimmed)) {
       throw new GrokOAuthError(
@@ -1176,7 +1190,14 @@ function parseCallbackInput(
     return { code: trimmed };
   }
   const expected = new URL(expectedRedirectUri);
-  const actual = new URL(trimmed);
+  return parseCallbackUrl(new URL(trimmed), expected, expectedState);
+}
+
+function parseCallbackUrl(
+  actual: URL,
+  expected: URL,
+  expectedState: string,
+): { readonly code: string; readonly error?: string } {
   if (
     actual.protocol !== expected.protocol
     || actual.hostname !== expected.hostname

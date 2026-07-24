@@ -473,6 +473,13 @@ export class ResilientChatRuntime {
       service: firstBackend?.service,
       model: firstCandidate?.upstreamModelId,
       mode,
+      ...(route.globalPrompt ? {
+        customPrompt: {
+          id: `project:${route.id}`,
+          revision: route.globalPrompt.revision,
+          text: route.globalPrompt.text,
+        },
+      } : {}),
     });
   }
 }

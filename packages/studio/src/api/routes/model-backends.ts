@@ -24,7 +24,7 @@ export function registerModelBackendRoutes(
 ): void {
   app.get("/api/v1/model-backends", async (c) => {
     const [{ routing, revision }, secrets, codexStatuses, grokStatuses] = await Promise.all([
-      store.read(),
+      store.repairDuplicateCustomServices(),
       store.readSecrets(),
       codexStore.list(),
       grokStore.list(),

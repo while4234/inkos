@@ -204,6 +204,7 @@ export interface GrokOAuthLoginStartDTO {
   readonly sessionId: string;
   readonly authorizationUrl: string;
   readonly expiresAt: string;
+  readonly automaticCallback?: boolean;
   readonly callback: {
     readonly scheme: "http";
     readonly host: "127.0.0.1";
@@ -245,6 +246,10 @@ export interface LogicalModelRouteDTO {
   readonly id: string;
   readonly displayName: string;
   readonly promptFamily: StudioPromptFamily;
+  readonly globalPrompt?: {
+    readonly text: string;
+    readonly revision: number;
+  };
   readonly enabled: boolean;
   readonly candidates: ReadonlyArray<LogicalModelCandidateDTO>;
   readonly isDefault: boolean;

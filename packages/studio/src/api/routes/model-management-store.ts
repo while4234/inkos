@@ -23,6 +23,22 @@ interface ProjectRoutingDocument {
   readonly revision: string;
 }
 
+export interface CustomServiceBackendUpsert {
+  readonly expectedRevision: string;
+  readonly service: string;
+  readonly displayName: string;
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly apiKey: string;
+  readonly backendId: string;
+  readonly credentialId: string;
+  readonly routeId: string;
+  readonly apiFormat: "chat" | "responses";
+  readonly stream: boolean;
+  readonly enabled: boolean;
+  readonly includeInFailover: boolean;
+}
+
 type RoutingMutation = (routing: ModelRoutingConfig) => void;
 
 const projectMutationQueues = new Map<string, Promise<void>>();
@@ -47,6 +63,140 @@ export class ModelManagementStore {
     return this.readSecretsUnlocked();
   }
 
+  public async repairDuplicateCustomServices(): Promise<ProjectRoutingDocument> {
+    return this.serialize(async () => {
+      const current = await this.readUnlocked();
+      const routing = structuredClone(current.routing);
+      const groups = new Map<string, BackendInstance[]>();
+      for (const backend of routing.backends) {
+        if (
+          backend.credentialRef.kind !== "api_key"
+          || !backend.service.startsWith("custom:")
+        ) {
+          continue;
+        }
+        const key = `${backend.service}\0${backend.baseUrl.trim().replace(/\/+$/u, "").toLowerCase()}`;
+        const group = groups.get(key) ?? [];
+        group.push(backend);
+        groups.set(key, group);
+      }
+
+      let changed = false;
+      for (const backends of groups.values()) {
+        if (backends.length < 2) continue;
+        const backendIds = new Set(backends.map((backend) => backend.id));
+        const defaultRoute = routing.routes.find(
+          (route) => route.id === routing.defaultRouteId,
+        );
+        const defaultBackendId = defaultRoute?.candidates.find((candidate) =>
+          backendIds.has(candidate.backendId)
+        )?.backendId;
+        const preferred = backends.find((backend) => backend.id === defaultBackendId)
+          ?? backends[0]!;
+        const routeOrigins = new Map<string, string | undefined>(
+          routing.routes.map((route) => [
+            route.id,
+            route.candidates.find((candidate) =>
+              backendIds.has(candidate.backendId)
+            )?.backendId,
+          ]),
+        );
+
+        routing.backends = routing.backends.filter(
+          (backend) => !backendIds.has(backend.id) || backend.id === preferred.id,
+        );
+        routing.routes = routing.routes.map((route) => ({
+          ...route,
+          candidates: deduplicateCandidates(route.candidates.map((candidate) =>
+            backendIds.has(candidate.backendId)
+              ? { ...candidate, backendId: preferred.id }
+              : candidate
+          )),
+        }));
+
+        const duplicateRouteIds = new Set<string>();
+        const routesByCandidate = new Map<string, LogicalModelRoute[]>();
+        for (const route of routing.routes) {
+          if (
+            route.candidates.length !== 1
+            || route.candidates[0]?.backendId !== preferred.id
+            || !routeOrigins.get(route.id)
+          ) {
+            continue;
+          }
+          const model = route.candidates[0].upstreamModelId;
+          const routes = routesByCandidate.get(model) ?? [];
+          routes.push(route);
+          routesByCandidate.set(model, routes);
+        }
+        for (const routes of routesByCandidate.values()) {
+          if (routes.length < 2) continue;
+          const keep = routes.find((route) => route.id === routing.defaultRouteId)
+            ?? routes.find((route) => routeOrigins.get(route.id) === preferred.id)
+            ?? routes[0]!;
+          for (const route of routes) {
+            if (route.id !== keep.id) duplicateRouteIds.add(route.id);
+          }
+        }
+        routing.routes = routing.routes.filter(
+          (route) => !duplicateRouteIds.has(route.id),
+        );
+        changed = true;
+      }
+
+      if (!changed) return current;
+
+      if (
+        routing.defaultRouteId
+        && !routing.routes.some((route) => route.id === routing.defaultRouteId)
+      ) {
+        routing.defaultRouteId = routing.routes.find((route) => route.enabled)?.id ?? null;
+      }
+      const referencedCredentialIds = new Set(
+        routing.backends.map((backend) => backend.credentialRef.id),
+      );
+      const removedCredentialIds = routing.credentials
+        .filter((credential) =>
+          credential.kind === "api_key"
+          && !referencedCredentialIds.has(credential.id)
+        )
+        .map((credential) => credential.id);
+      routing.credentials = routing.credentials.filter((credential) =>
+        credential.kind !== "api_key"
+        || referencedCredentialIds.has(credential.id)
+      );
+
+      const parsed = parseRouting(routing);
+      const config = structuredClone(current.config);
+      const llm = objectValue(config.llm) ?? {};
+      llm.routing = parsed;
+      synchronizeLegacySelection(llm, parsed);
+      config.llm = llm;
+
+      const secrets = await this.readSecretsUnlocked();
+      const originalSecrets = structuredClone(secrets);
+      for (const credentialId of removedCredentialIds) {
+        delete secrets.credentials?.[credentialId];
+      }
+      await saveSecrets(this.projectRoot, secrets);
+      try {
+        await writeJsonAtomically(
+          join(this.projectRoot, "inkos.json"),
+          config,
+          { fileMode: 0o600 },
+        );
+      } catch (error) {
+        await saveSecrets(this.projectRoot, originalSecrets);
+        throw error;
+      }
+      return {
+        config,
+        routing: parsed,
+        revision: routingRevision(parsed),
+      };
+    });
+  }
+
   public async setApiKey(
     expectedRevision: string | undefined,
     credentialId: string,
@@ -68,6 +218,181 @@ export class ModelManagementStore {
       secrets.credentials[credentialId] = { kind: "api_key", apiKey };
       await saveSecrets(this.projectRoot, secrets);
       return current;
+    });
+  }
+
+  public async upsertCustomServiceBackend(
+    input: CustomServiceBackendUpsert,
+  ): Promise<ProjectRoutingDocument> {
+    return this.serialize(async () => {
+      const current = await this.readUnlocked();
+      assertRevision(input.expectedRevision, current.revision);
+      const routing = structuredClone(current.routing);
+      const matchingBackends = routing.backends.filter((backend) =>
+        backend.service === input.service && backend.credentialRef.kind === "api_key"
+      );
+      const defaultRoute = routing.routes.find(
+        (route) => route.id === routing.defaultRouteId,
+      );
+      const defaultBackendId = defaultRoute?.candidates.find((candidate) =>
+        matchingBackends.some((backend) => backend.id === candidate.backendId)
+      )?.backendId;
+      const selectedBackend = matchingBackends.find(
+        (backend) => backend.id === defaultBackendId,
+      ) ?? matchingBackends.find(
+        (backend) => backend.id === input.backendId,
+      ) ?? matchingBackends[0];
+      const backendId = selectedBackend?.id ?? input.backendId;
+      const credentialId = selectedBackend?.credentialRef.id ?? input.credentialId;
+      const equivalentBackendIds = new Set([
+        backendId,
+        ...matchingBackends.map((backend) => backend.id),
+      ]);
+
+      const backend = BackendInstanceSchema.parse({
+        id: backendId,
+        displayName: input.displayName,
+        service: input.service,
+        provider: selectedBackend?.provider ?? "custom",
+        baseUrl: input.baseUrl,
+        credentialRef: { id: credentialId, kind: "api_key" },
+        enabled: input.enabled,
+        transport: {
+          apiFormat: input.apiFormat,
+          stream: input.stream,
+        },
+      });
+      routing.backends = [
+        ...routing.backends.filter((candidate) =>
+          !equivalentBackendIds.has(candidate.id)
+        ),
+        backend,
+      ];
+
+      const credential = routing.credentials.find(
+        (candidate) => candidate.id === credentialId,
+      );
+      if (!credential) {
+        routing.credentials.push(CredentialMetadataSchema.parse({
+          id: credentialId,
+          kind: "api_key",
+          label: `${input.displayName} API Key`,
+          scope: "project",
+        }));
+      }
+
+      const relatedRoutes = routing.routes.filter((route) =>
+        route.candidates.some((candidate) =>
+          equivalentBackendIds.has(candidate.backendId)
+        )
+      );
+      const selectedRoute = relatedRoutes.find(
+        (route) => route.id === routing.defaultRouteId
+          && route.candidates.some((candidate) =>
+            equivalentBackendIds.has(candidate.backendId)
+            && candidate.upstreamModelId === input.model
+          ),
+      ) ?? relatedRoutes.find((route) =>
+        route.candidates.some((candidate) =>
+          equivalentBackendIds.has(candidate.backendId)
+          && candidate.upstreamModelId === input.model
+        )
+      ) ?? routing.routes.find((route) => route.id === input.routeId);
+      const routeId = selectedRoute?.id ?? input.routeId;
+      const desiredCandidate = {
+        backendId,
+        upstreamModelId: input.model,
+      };
+
+      routing.routes = routing.routes.flatMap((route) => {
+        if (route.id === routeId) return [];
+        const candidates = deduplicateCandidates(route.candidates.map((candidate) =>
+          equivalentBackendIds.has(candidate.backendId)
+            ? { ...candidate, backendId }
+            : candidate
+        ));
+        const duplicatesDesiredRoute = candidates.length === 1
+          && candidates[0]?.backendId === backendId
+          && candidates[0]?.upstreamModelId === input.model
+          && route.candidates.every((candidate) =>
+            equivalentBackendIds.has(candidate.backendId)
+          );
+        if (duplicatesDesiredRoute) return [];
+        return [{ ...route, candidates }];
+      });
+
+      if (input.includeInFailover) {
+        routing.routes.push(LogicalModelRouteSchema.parse({
+          id: routeId,
+          displayName: selectedRoute?.displayName ?? `${input.displayName} route`,
+          promptFamily: selectedRoute?.promptFamily ?? inferPromptFamily(input.model),
+          enabled: true,
+          candidates: [desiredCandidate],
+          ...(selectedRoute?.globalPrompt
+            ? { globalPrompt: selectedRoute.globalPrompt }
+            : {}),
+        }));
+        if (
+          routing.defaultRouteId === null
+          || !routing.routes.some((route) => route.id === routing.defaultRouteId)
+        ) {
+          routing.defaultRouteId = routeId;
+        }
+      } else if (
+        routing.defaultRouteId === routeId
+        || !routing.routes.some((route) => route.id === routing.defaultRouteId)
+      ) {
+        routing.defaultRouteId = routing.routes.find((route) => route.enabled)?.id ?? null;
+      }
+
+      const referencedCredentialIds = new Set(
+        routing.backends.map((candidate) => candidate.credentialRef.id),
+      );
+      const removedCredentialIds = routing.credentials
+        .filter((candidate) =>
+          candidate.kind === "api_key"
+          && !referencedCredentialIds.has(candidate.id)
+        )
+        .map((candidate) => candidate.id);
+      routing.credentials = routing.credentials.filter((candidate) =>
+        candidate.kind !== "api_key"
+        || referencedCredentialIds.has(candidate.id)
+      );
+
+      const parsed = parseRouting(routing);
+      const config = structuredClone(current.config);
+      const llm = objectValue(config.llm) ?? {};
+      llm.routing = parsed;
+      synchronizeLegacySelection(llm, parsed);
+      config.llm = llm;
+
+      const secrets = await this.readSecretsUnlocked();
+      const originalSecrets = structuredClone(secrets);
+      secrets.credentials ??= {};
+      secrets.credentials[credentialId] = {
+        kind: "api_key",
+        apiKey: input.apiKey,
+        legacyServiceId: input.service,
+      };
+      for (const removedCredentialId of removedCredentialIds) {
+        delete secrets.credentials[removedCredentialId];
+      }
+      await saveSecrets(this.projectRoot, secrets);
+      try {
+        await writeJsonAtomically(
+          join(this.projectRoot, "inkos.json"),
+          config,
+          { fileMode: 0o600 },
+        );
+      } catch (error) {
+        await saveSecrets(this.projectRoot, originalSecrets);
+        throw error;
+      }
+      return {
+        config,
+        routing: parsed,
+        revision: routingRevision(parsed),
+      };
     });
   }
 
@@ -383,4 +708,24 @@ function synchronizeLegacySelection(llm: Record<string, unknown>, routing: Model
   llm.baseUrl = backend.baseUrl;
   llm.apiFormat = backend.transport.apiFormat;
   llm.stream = backend.transport.stream;
+}
+
+function deduplicateCandidates(
+  candidates: LogicalModelRoute["candidates"],
+): LogicalModelRoute["candidates"] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.backendId}\0${candidate.upstreamModelId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function inferPromptFamily(model: string): "gpt" | "grok" | "deepseek" | "generic" {
+  const normalized = model.trim().toLowerCase();
+  if (/^(?:gpt|codex|o1|o3|o4)(?:[-_.]|$)/u.test(normalized)) return "gpt";
+  if (/^grok(?:[-_.]|$)/u.test(normalized)) return "grok";
+  if (/^deepseek(?:[-_.]|$)/u.test(normalized)) return "deepseek";
+  return "generic";
 }

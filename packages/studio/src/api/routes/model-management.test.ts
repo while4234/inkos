@@ -229,6 +229,73 @@ describe("model management API", () => {
     });
   });
 
+  it("repairs duplicate Custom backends and generated routes when continuity is opened", async () => {
+    const routing = routingFixture();
+    routing.credentials.push({
+      id: "credential-duplicate",
+      kind: "api_key",
+      label: "Duplicate key",
+      scope: "project",
+    });
+    routing.backends.push({
+      ...routing.backends[0]!,
+      id: "backend-duplicate",
+      credentialRef: { id: "credential-duplicate", kind: "api_key" },
+    });
+    routing.routes.push({
+      id: "route-duplicate",
+      displayName: "Custom route",
+      promptFamily: "generic",
+      enabled: true,
+      candidates: [{
+        backendId: "backend-duplicate",
+        upstreamModelId: "gpt-fixture",
+      }],
+    });
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      name: "duplicate-custom",
+      version: "0.1.0",
+      llm: {
+        provider: "custom",
+        service: "custom:a",
+        baseUrl: "http://127.0.0.1:41001/v1",
+        model: "gpt-fixture",
+        routing,
+      },
+    }), "utf-8");
+    await writeFile(join(root, ".inkos", "secrets.json"), JSON.stringify({
+      services: {},
+      credentials: {
+        "credential-a": { kind: "api_key", apiKey: SECRET },
+        "credential-duplicate": {
+          kind: "api_key",
+          apiKey: "fixture-duplicate-key-12345",
+        },
+      },
+    }), "utf-8");
+
+    const response = await json<{
+      backends: Array<{ id: string; service: string }>;
+    }>(app, "/api/v1/model-backends");
+    expect(response.backends.filter((backend) => backend.service === "custom:a"))
+      .toEqual([expect.objectContaining({ id: "backend-a" })]);
+
+    const saved = JSON.parse(
+      await readFile(join(root, "inkos.json"), "utf-8"),
+    ) as { llm: { routing: ReturnType<typeof routingFixture> } };
+    expect(saved.llm.routing.backends.map((backend) => backend.id))
+      .toEqual(["backend-a"]);
+    expect(saved.llm.routing.routes.map((route) => route.id))
+      .toEqual(["route-a"]);
+    expect(saved.llm.routing.credentials.map((credential) => credential.id))
+      .toEqual(["credential-a"]);
+    const secrets = JSON.parse(
+      await readFile(join(root, ".inkos", "secrets.json"), "utf-8"),
+    ) as { credentials: Record<string, unknown> };
+    expect(secrets.credentials).toHaveProperty("credential-a");
+    expect(secrets.credentials).not.toHaveProperty("credential-duplicate");
+  });
+
   it("does not let existingCredential bypass the Codex credential boundary", async () => {
     const initial = await json<{ revision: string }>(app, "/api/v1/model-backends");
     const response = await app.request("http://localhost/api/v1/model-backends", {
@@ -578,13 +645,50 @@ describe("model management API", () => {
       }),
     });
     expect(createRoute.status).toBe(201);
+    const routeRevision = (await createRoute.json() as { revision: string }).revision;
+    const updatePrompt = await app.request(
+      "http://localhost/api/v1/model-routes/route-ab",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision: routeRevision,
+          route: {
+            id: "route-ab",
+            displayName: "Writer A/B",
+            promptFamily: "gpt",
+            globalPrompt: {
+              text: "Preserve project canon across every backend attempt.",
+              revision: 1,
+            },
+            enabled: true,
+            candidates: [
+              { backendId: "backend-a", upstreamModelId: "gpt-fixture" },
+              { backendId: "backend-b", upstreamModelId: "gpt-fixture" },
+            ],
+          },
+        }),
+      },
+    );
+    expect(updatePrompt.status).toBe(200);
 
-    const routes = await json<{ routes: Array<{ id: string; candidates: Array<{ backendId: string }> }> }>(
+    const routes = await json<{
+      routes: Array<{
+        id: string;
+        globalPrompt?: { text: string; revision: number };
+        candidates: Array<{ backendId: string }>;
+      }>;
+    }>(
       app,
       "/api/v1/model-routes",
     );
-    expect(routes.routes.find((route) => route.id === "route-ab")?.candidates.map((candidate) => candidate.backendId))
+    const route = routes.routes.find((candidate) => candidate.id === "route-ab");
+    expect(route?.candidates.map((candidate) => candidate.backendId))
       .toEqual(["backend-a", "backend-b"]);
+    expect(route?.globalPrompt).toEqual({
+      text: "Preserve project canon across every backend attempt.",
+      revision: 1,
+    });
     const persisted = await readFile(join(root, "inkos.json"), "utf-8");
     expect(persisted).not.toContain(SECRET);
     expect(persisted).not.toContain("fixture-backend-b-key-67890");

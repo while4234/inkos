@@ -58,7 +58,10 @@ export function ModelRoutingPage({
   const [routeName, setRouteName] = useState("");
   const [upstreamModel, setUpstreamModel] = useState("");
   const [promptFamily, setPromptFamily] = useState<StudioPromptFamily>("gpt");
+  const [routeGlobalPrompt, setRouteGlobalPrompt] = useState("");
   const [selectedBackends, setSelectedBackends] = useState<string[]>([]);
+  const [globalPromptDrafts, setGlobalPromptDrafts] = useState<Record<string, string>>({});
+  const [promptFamilyDrafts, setPromptFamilyDrafts] = useState<Record<string, StudioPromptFamily>>({});
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
   const [agentName, setAgentName] = useState("");
   const [agentRouteId, setAgentRouteId] = useState("");
@@ -213,6 +216,12 @@ export function ModelRoutingPage({
           id: routeId.trim(),
           displayName: routeName.trim(),
           promptFamily,
+          ...(routeGlobalPrompt.trim() ? {
+            globalPrompt: {
+              text: routeGlobalPrompt.trim(),
+              revision: 1,
+            },
+          } : {}),
           enabled: true,
           candidates: selectedBackends.map((candidate) => ({
             backendId: candidate,
@@ -224,6 +233,7 @@ export function ModelRoutingPage({
     setRouteId("");
     setRouteName("");
     setUpstreamModel("");
+    setRouteGlobalPrompt("");
     setSelectedBackends([]);
   });
 
@@ -703,6 +713,18 @@ export function ModelRoutingPage({
             {["gpt", "grok", "deepseek", "none"].map((family) => <option key={family}>{family}</option>)}
           </select>
         </div>
+        <label className="block space-y-1.5 text-xs">
+          {tr("项目级全局提示词（可选，留空使用内置模型族提示词）", "Project global prompt (optional; leave empty to use the built-in family prompt)")}
+          <textarea
+            aria-label="Route global prompt"
+            value={routeGlobalPrompt}
+            onChange={(event) => setRouteGlobalPrompt(event.target.value)}
+            maxLength={32_768}
+            rows={5}
+            placeholder={tr("填写只应用于这条逻辑路由的全局提示词", "Enter the global prompt applied only to this logical route")}
+            className={`${fieldClass} resize-y`}
+          />
+        </label>
         <div className="flex flex-wrap gap-2">
           {view.backends.map((backend) => (
             <label key={backend.id} className="flex items-center gap-1 rounded border px-2 py-1 text-xs">
@@ -712,7 +734,13 @@ export function ModelRoutingPage({
           ))}
         </div>
         <button disabled={busy !== "" || !routeId.trim() || !routeName.trim() || !upstreamModel.trim() || selectedBackends.length === 0} onClick={createRoute} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">{tr("创建路由", "Create route")}</button>
-        {view.routes.map((route) => (
+        {view.routes.map((route) => {
+          const savedPrompt = route.globalPrompt?.text ?? "";
+          const promptDraft = globalPromptDrafts[route.id] ?? savedPrompt;
+          const familyDraft = promptFamilyDrafts[route.id] ?? route.promptFamily;
+          const promptChanged = promptDraft !== savedPrompt
+            || familyDraft !== route.promptFamily;
+          return (
           <article key={route.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/40 p-3">
             <div>
               <div className="font-medium">{route.displayName} {route.isDefault && <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">default</span>}</div>
@@ -736,6 +764,7 @@ export function ModelRoutingPage({
                               id: route.id,
                               displayName: route.displayName,
                               promptFamily: route.promptFamily,
+                              ...(route.globalPrompt ? { globalPrompt: route.globalPrompt } : {}),
                               enabled: route.enabled,
                               candidates,
                             },
@@ -759,6 +788,7 @@ export function ModelRoutingPage({
                               id: route.id,
                               displayName: route.displayName,
                               promptFamily: route.promptFamily,
+                              ...(route.globalPrompt ? { globalPrompt: route.globalPrompt } : {}),
                               enabled: route.enabled,
                               candidates,
                             },
@@ -771,6 +801,85 @@ export function ModelRoutingPage({
                 ))}
               </ol>
             </div>
+            <div className="basis-full space-y-2 border-t border-border/40 pt-3">
+              <div className="grid gap-2 md:grid-cols-[180px_1fr]">
+                <label className="space-y-1 text-xs">
+                  {tr("模型族与注入状态", "Model family and injection")}
+                  <select
+                    aria-label={`Prompt family ${route.id}`}
+                    value={familyDraft}
+                    onChange={(event) => setPromptFamilyDrafts((drafts) => ({
+                      ...drafts,
+                      [route.id]: event.target.value as StudioPromptFamily,
+                    }))}
+                    className={fieldClass}
+                  >
+                    {["gpt", "grok", "deepseek", "generic", "none"].map((family) => <option key={family}>{family}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1 text-xs">
+                  {tr("项目级全局提示词（留空使用内置模型族提示词）", "Project global prompt (leave empty to use the built-in family prompt)")}
+                  <textarea
+                    aria-label={`Global prompt ${route.id}`}
+                    value={promptDraft}
+                    onChange={(event) => setGlobalPromptDrafts((drafts) => ({
+                      ...drafts,
+                      [route.id]: event.target.value,
+                    }))}
+                    maxLength={32_768}
+                    rows={4}
+                    className={`${fieldClass} resize-y`}
+                  />
+                </label>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">
+                  {familyDraft === "none"
+                    ? tr("已关闭这条路由的全局提示词注入。", "Global prompt injection is disabled for this route.")
+                    : promptDraft.trim()
+                      ? tr("将使用此项目级内容，并只在最终请求边界注入一次。", "This project prompt is injected once at the final request boundary.")
+                      : tr("将使用所选模型族的 InkOS 内置提示词。", "The built-in InkOS prompt for the selected family will be used.")}
+                </p>
+                <button
+                  disabled={!promptChanged || busy !== ""}
+                  onClick={() => run(`prompt-${route.id}`, async () => {
+                    await fetchJson(`/model-routes/${encodeURIComponent(route.id)}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        revision: view.revision,
+                        route: {
+                          id: route.id,
+                          displayName: route.displayName,
+                          promptFamily: familyDraft,
+                          ...(promptDraft.trim() ? {
+                            globalPrompt: {
+                              text: promptDraft.trim(),
+                              revision: (route.globalPrompt?.revision ?? 0) + 1,
+                            },
+                          } : {}),
+                          enabled: route.enabled,
+                          candidates: route.candidates,
+                        },
+                      }),
+                    });
+                    setGlobalPromptDrafts((drafts) => {
+                      const next = { ...drafts };
+                      delete next[route.id];
+                      return next;
+                    });
+                    setPromptFamilyDrafts((drafts) => {
+                      const next = { ...drafts };
+                      delete next[route.id];
+                      return next;
+                    });
+                  })}
+                  className="shrink-0 rounded border px-3 py-2 text-xs disabled:opacity-40"
+                >
+                  {tr("保存全局提示词", "Save global prompt")}
+                </button>
+              </div>
+            </div>
             <div className="flex gap-2">
               {!route.isDefault && <button onClick={() => run(`default-${route.id}`, () => fetchJson(`/model-routes/${encodeURIComponent(route.id)}/default`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revision: view.revision }) }).then(() => undefined))} className="rounded border px-2 py-1 text-xs">{tr("设为默认", "Set default")}</button>}
               {!route.isDefault && <button aria-label={`Delete ${route.id}`} onClick={() => {
@@ -779,7 +888,8 @@ export function ModelRoutingPage({
               }} className="rounded border border-destructive/40 p-1 text-destructive"><Trash2 size={14} /></button>}
             </div>
           </article>
-        ))}
+          );
+        })}
       </section>
 
       <section className="space-y-3 rounded-xl border border-border/50 p-4">

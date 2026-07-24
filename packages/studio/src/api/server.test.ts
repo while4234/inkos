@@ -394,7 +394,7 @@ beforeAll(async () => {
     saveStudioTaskSnapshot,
     studioTaskSnapshotPath,
   } = await import("./task-store.js"));
-});
+}, 30_000);
 
 const projectConfig = {
   name: "studio-test",
@@ -1436,22 +1436,47 @@ describe("createStudioServer daemon lifecycle", () => {
       },
     );
     expect(normalized.status).toBe(200);
+    const repeated = await app.request(
+      "http://localhost/api/v1/services/custom%3AGateway/normalized",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "Gateway",
+          baseUrl: "https://gateway.example.test/v1",
+          model: "model-two",
+          apiFormat: "chat",
+          stream: true,
+          enabled: true,
+          includeInFailover: true,
+        }),
+      },
+    );
+    expect(repeated.status).toBe(200);
     const backends = await app.request("http://localhost/api/v1/model-backends");
     const backendText = await backends.text();
     expect(backendText).not.toContain("sk-normalized-custom");
     const backendBody = JSON.parse(backendText) as {
       backends: Array<{ id: string; service: string; credential: { configured: boolean } }>;
     };
-    const backend = backendBody.backends.find((item) => item.service === "custom:Gateway");
+    const matchingBackends = backendBody.backends.filter(
+      (item) => item.service === "custom:Gateway",
+    );
+    expect(matchingBackends).toHaveLength(1);
+    const backend = matchingBackends[0];
     expect(backend).toMatchObject({ service: "custom:Gateway", credential: { configured: true } });
     const routes = await app.request("http://localhost/api/v1/model-routes");
-    expect(await routes.json()).toMatchObject({
-      routes: [
-        expect.objectContaining({
-          candidates: [{ backendId: backend?.id, upstreamModelId: "model-two" }],
-        }),
-      ],
-    });
+    const routeBody = await routes.json() as {
+      routes: Array<{
+        candidates: Array<{ backendId: string; upstreamModelId: string }>;
+      }>;
+    };
+    expect(routeBody.routes.filter((route) =>
+      route.candidates.some((candidate) =>
+        candidate.backendId === backend?.id
+        && candidate.upstreamModelId === "model-two"
+      )
+    )).toHaveLength(1);
   });
 
   it("deletes a custom service config and stored secret", async () => {

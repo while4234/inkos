@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  GROK_NATIVE_OAUTH_CONFIG,
   GrokCredentialStore,
   GrokOAuthClient,
   GrokOAuthError,
   GrokOAuthLoginManager,
+  grokOAuthConfigFromEnv,
   grokOAuthConfigurationStatus,
   startGrokLoopbackCallback,
   type GrokOAuthConfig,
@@ -26,6 +28,15 @@ afterEach(async () => {
 });
 
 describe("Grok OAuth OIDC login", () => {
+  it("ships the native Grok login application settings without asking users for developer fields", () => {
+    expect(grokOAuthConfigFromEnv({})).toEqual(GROK_NATIVE_OAUTH_CONFIG);
+    expect(grokOAuthConfigurationStatus(grokOAuthConfigFromEnv({}))).toMatchObject({
+      configured: true,
+      issuer: "https://auth.x.ai",
+      redirectUri: "http://127.0.0.1:56121/callback",
+    });
+  });
+
   it("reports exact missing production configuration without network access", () => {
     expect(grokOAuthConfigurationStatus({})).toEqual({
       configured: false,
@@ -107,7 +118,7 @@ describe("Grok OAuth OIDC login", () => {
     const secondState = new URL(second.authorizationUrl).searchParams.get("state")!;
     const completed = await manager.complete(
       second.sessionId,
-      `http://127.0.0.1:56121/callback?code=secret-code&state=${secondState}`,
+      `?code=secret-code&state=${secondState}`,
     );
     expect(completed).toMatchObject({
       id: "grok-two",

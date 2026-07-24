@@ -68,10 +68,16 @@ export const PromptFamilySchema = z.enum([
   "generic",
 ]);
 
+export const ModelGlobalPromptOverrideSchema = z.object({
+  text: z.string().min(1).max(32_768),
+  revision: z.number().int().positive().default(1),
+}).strict();
+
 export const LogicalModelRouteSchema = z.object({
   id: StableIdSchema,
   displayName: z.string().min(1),
   promptFamily: PromptFamilySchema.default("generic"),
+  globalPrompt: ModelGlobalPromptOverrideSchema.optional(),
   enabled: z.boolean().default(true),
   candidates: z.array(LogicalModelCandidateSchema).min(1, "must contain at least one candidate"),
 }).strict();

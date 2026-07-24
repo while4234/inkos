@@ -726,6 +726,29 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(selectStudioAgentRoute(routing, "openai", "unconfigured-model")).toBeNull();
   });
 
+  it("reads the current SPA entry after frontend assets are rebuilt", async () => {
+    const indexPath = join(root, "studio-index.html");
+    const { readStudioIndexHtml } = await import("./server.js");
+
+    await writeFile(
+      indexPath,
+      '<script type="module" src="/assets/index-old.js"></script>',
+      "utf-8",
+    );
+    await expect(readStudioIndexHtml(indexPath)).resolves.toContain(
+      "/assets/index-old.js",
+    );
+
+    await writeFile(
+      indexPath,
+      '<script type="module" src="/assets/index-new.js"></script>',
+      "utf-8",
+    );
+    const updatedHtml = await readStudioIndexHtml(indexPath);
+    expect(updatedHtml).toContain("/assets/index-new.js");
+    expect(updatedHtml).not.toContain("/assets/index-old.js");
+  });
+
   it("returns from /api/daemon/start before the first write cycle finishes", async () => {
     let resolveStart: (() => void) | undefined;
     schedulerStartMock.mockImplementation(

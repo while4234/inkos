@@ -6767,6 +6767,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
 // --- Standalone runner ---
 
+export async function readStudioIndexHtml(indexPath: string): Promise<string> {
+  return readFile(indexPath, "utf-8");
+}
+
 export async function startStudioServer(
   root: string,
   port = 4567,
@@ -6807,10 +6811,16 @@ export async function startStudioServer(
     // SPA fallback — serve index.html for all non-API routes
     const indexPath = joinPath(options.staticDir!, "index.html");
     if (existsSync(indexPath)) {
-      const indexHtml = await readFileFs(indexPath, "utf-8");
-      app.get("*", (c) => {
+      app.get("*", async (c) => {
         if (c.req.path.startsWith("/api/v1/")) return c.notFound();
-        return c.html(indexHtml);
+        try {
+          // Vite asset names are content-hashed, so a rebuild must also refresh
+          // the entry document instead of leaving it pointed at removed files.
+          c.header("Cache-Control", "no-cache");
+          return c.html(await readStudioIndexHtml(indexPath));
+        } catch {
+          return c.notFound();
+        }
       });
     }
   }

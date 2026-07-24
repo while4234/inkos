@@ -3,8 +3,10 @@ import {
   CodexCredentialStore,
   FileBackendHealthStore,
   GrokCredentialStore,
+  GrokOAuthClient,
   GrokOAuthError,
   GrokOAuthLoginManager,
+  grokOAuthConfigurationStatus,
   type GrokOAuthConfigurationStatus,
   discoverCodexAuthCandidates,
   importDiscoveredCodexAuth,
@@ -39,6 +41,7 @@ export function registerModelAuthRoutes(
     readonly revision?: string;
     readonly wasConnected: boolean;
   }>();
+  const grokLoginManagers = new Map<string, GrokOAuthLoginManager>();
   app.get("/api/v1/model-auth", async (c) => {
     const [{ routing }, secrets, codexStatuses, grokStatuses] = await Promise.all([
       store.read(),
@@ -75,13 +78,6 @@ export function registerModelAuthRoutes(
   }));
 
   app.post("/api/v1/model-auth/grok/login", async (c) => {
-    if (!grok.loginManager) {
-      throw new ApiError(
-        409,
-        "GROK_OAUTH_CONFIG_MISSING",
-        `Grok OAuth configuration is missing: ${grok.config.missing.join(", ")}.`,
-      );
-    }
     const body = requestRecord(await c.req.json());
     const credentialId = requiredString(body.credentialId, "credentialId");
     const label = requiredString(body.label, "label");
@@ -96,8 +92,37 @@ export function registerModelAuthRoutes(
         `Credential "${credentialId}" already uses another credential kind.`,
       );
     }
-    const start = await grok.loginManager.begin(credentialId, c.req.raw.signal)
+    let loginManager = grok.loginManager;
+    if (!loginManager && body.oauthConfig && typeof body.oauthConfig === "object") {
+      const rawConfig = requestRecord(body.oauthConfig);
+      const config = {
+        issuer: requiredString(rawConfig.issuer, "oauthConfig.issuer"),
+        clientId: requiredString(rawConfig.clientId, "oauthConfig.clientId"),
+        redirectUri: requiredString(rawConfig.redirectUri, "oauthConfig.redirectUri"),
+      };
+      const status = grokOAuthConfigurationStatus(config);
+      if (!status.configured) {
+        throw new ApiError(
+          400,
+          "GROK_OAUTH_CONFIG_INVALID",
+          `Grok OAuth configuration is invalid: ${status.missing.join(", ")}.`,
+        );
+      }
+      loginManager = new GrokOAuthLoginManager(
+        new GrokOAuthClient(config),
+        grok.store,
+      );
+    }
+    if (!loginManager) {
+      throw new ApiError(
+        409,
+        "GROK_OAUTH_CONFIG_MISSING",
+        `Grok OAuth configuration is missing: ${grok.config.missing.join(", ")}.`,
+      );
+    }
+    const start = await loginManager.begin(credentialId, c.req.raw.signal)
       .catch((error) => { throw toGrokApiError(error); });
+    grokLoginManagers.set(start.sessionId, loginManager);
     pendingGrokLogins.set(start.sessionId, {
       credentialId,
       label,
@@ -108,12 +133,16 @@ export function registerModelAuthRoutes(
   });
 
   app.get("/api/v1/model-auth/grok/login/:sessionId", (c) => {
-    if (!grok.loginManager) {
+    const sessionId = c.req.param("sessionId");
+    const loginManager = grokLoginManagers.get(sessionId) ?? grok.loginManager;
+    if (!loginManager) {
       return c.json({ status: "missing", message: "Start the Grok connection again." });
     }
-    const sessionId = c.req.param("sessionId");
-    const status = grok.loginManager.status(sessionId);
-    if (status !== "pending") pendingGrokLogins.delete(sessionId);
+    const status = loginManager.status(sessionId);
+    if (status !== "pending") {
+      pendingGrokLogins.delete(sessionId);
+      grokLoginManagers.delete(sessionId);
+    }
     return c.json({
       status,
       ...(status === "missing" || status === "expired"
@@ -123,14 +152,15 @@ export function registerModelAuthRoutes(
   });
 
   app.post("/api/v1/model-auth/grok/login/:sessionId/complete", async (c) => {
-    if (!grok.loginManager) {
+    const sessionId = c.req.param("sessionId");
+    const loginManager = grokLoginManagers.get(sessionId) ?? grok.loginManager;
+    if (!loginManager) {
       throw new ApiError(
         409,
         "GROK_LOGIN_SESSION_MISSING",
         "Grok login session is unavailable; start the connection again.",
       );
     }
-    const sessionId = c.req.param("sessionId");
     const pending = pendingGrokLogins.get(sessionId);
     if (!pending) {
       throw new ApiError(
@@ -142,46 +172,60 @@ export function registerModelAuthRoutes(
     const body = requestRecord(await c.req.json());
     const callback = requiredString(body.callback, "callback");
     try {
-      const credential = await grok.loginManager.complete(
+      const credential = await loginManager.complete(
         sessionId,
         callback,
         c.req.raw.signal,
       );
       const revision = await ensureGrokMetadata(store, pending);
       await recoverCredentialBackends(store, pending.credentialId);
-      grok.loginManager.cancel(sessionId);
+      loginManager.cancel(sessionId);
       return c.json({ ok: true, revision, credential });
     } catch (error) {
-      grok.loginManager.cancel(sessionId);
+      loginManager.cancel(sessionId);
       if (!pending.wasConnected) {
         await grok.store.delete(pending.credentialId).catch(() => undefined);
       }
       throw toGrokApiError(error);
     } finally {
       pendingGrokLogins.delete(sessionId);
+      grokLoginManagers.delete(sessionId);
     }
   });
 
   app.delete("/api/v1/model-auth/grok/login/:sessionId", (c) => {
     const sessionId = c.req.param("sessionId");
     pendingGrokLogins.delete(sessionId);
-    grok.loginManager?.cancel(sessionId);
+    (grokLoginManagers.get(sessionId) ?? grok.loginManager)?.cancel(sessionId);
+    grokLoginManagers.delete(sessionId);
     return c.json({ ok: true });
   });
 
   app.get("/api/v1/model-auth/grok/callback", async (c) => {
-    if (!grok.loginManager) {
+    const managers = [...new Set([
+      ...grokLoginManagers.values(),
+      ...(grok.loginManager ? [grok.loginManager] : []),
+    ])];
+    if (managers.length === 0) {
       return c.text("Grok login session is unavailable. Return to Studio and start again.", 410);
     }
     let completed: Awaited<ReturnType<GrokOAuthLoginManager["completeCallback"]>> | undefined;
+    let completedBy: GrokOAuthLoginManager | undefined;
     try {
-      completed = await grok.loginManager.completeCallback(
-        c.req.url,
-        c.req.raw.signal,
-      );
+      let lastError: unknown;
+      for (const manager of managers) {
+        try {
+          completed = await manager.completeCallback(c.req.url, c.req.raw.signal);
+          completedBy = manager;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!completed || !completedBy) throw lastError ?? new Error("Grok login session is unavailable.");
       const pending = pendingGrokLogins.get(completed.sessionId);
       if (!pending) {
-        grok.loginManager.cancel(completed.sessionId);
+        completedBy.cancel(completed.sessionId);
         await grok.store.delete(completed.credential.id).catch(() => undefined);
         return c.text("Grok login session is unavailable. Return to Studio and start again.", 410);
       }
@@ -192,7 +236,7 @@ export function registerModelAuthRoutes(
       );
     } catch {
       if (completed) {
-        grok.loginManager.cancel(completed.sessionId);
+        completedBy?.cancel(completed.sessionId);
         const pending = pendingGrokLogins.get(completed.sessionId);
         if (!pending?.wasConnected) {
           await grok.store.delete(completed.credential.id).catch(() => undefined);
@@ -200,7 +244,10 @@ export function registerModelAuthRoutes(
       }
       return c.text("Grok connection failed. Return to Studio and start again.", 400);
     } finally {
-      if (completed) pendingGrokLogins.delete(completed.sessionId);
+      if (completed) {
+        pendingGrokLogins.delete(completed.sessionId);
+        grokLoginManagers.delete(completed.sessionId);
+      }
     }
   });
 

@@ -16,6 +16,10 @@ import {
 } from "./model-health.js";
 import { ModelManagementStore } from "./model-management-store.js";
 import { registerModelRouteRoutes } from "./model-routes.js";
+import {
+  registerModelProviderDiagnosticRoutes,
+  type ModelProviderDiagnosticsOptions,
+} from "./model-provider-diagnostics.js";
 import { StudioRoutingActivity } from "./model-routing-activity.js";
 
 export interface ModelManagementRegistration {
@@ -24,7 +28,8 @@ export interface ModelManagementRegistration {
 }
 
 export interface ModelManagementRouteOptions
-  extends Partial<Omit<ModelHealthRouteOptions, "activity">> {
+  extends Partial<Omit<ModelHealthRouteOptions, "activity">>,
+    ModelProviderDiagnosticsOptions {
   readonly codexStore?: CodexCredentialStore;
   readonly grokStore?: GrokCredentialStore;
   readonly grokConfig?: Partial<GrokOAuthConfig>;
@@ -55,6 +60,7 @@ export function registerModelManagementRoutes(
     loginManager: grokLoginManager,
   });
   registerModelBackendRoutes(app, store, codexStore, grokStore);
+  registerModelProviderDiagnosticRoutes(app, codexStore, grokStore, options);
   registerModelRouteRoutes(app, store);
   registerModelHealthRoutes(app, store, { ...options, activity });
   return { store, activity };

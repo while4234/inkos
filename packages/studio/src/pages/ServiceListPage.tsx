@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Eye, EyeOff, Loader2, Plus, Search, X } from "lucide-react";
 import { GROUP_ORDER, getGroupDescription, getGroupLabel, getGroupShortLabel } from "../constants/service-groups";
 import { tr } from "../lib/app-language";
@@ -7,7 +7,6 @@ import { useServiceStore } from "../store/service";
 import type { EndpointGroup, ServiceInfo } from "../store/service";
 import { ServiceQuickLinks, getServiceQuickLinks } from "../components/ServiceQuickLinks";
 import { ServiceConfigSourceCard } from "../components/ServiceConfigSourceCard";
-import { ModelRoutingPage } from "./ModelRoutingPage";
 
 interface Nav {
   toDashboard: () => void;
@@ -281,8 +280,16 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
   const [selectedGroups, setSelectedGroups] = useState<Set<EndpointGroup>>(new Set());
   const [onlyConnected, setOnlyConnected] = useState(false);
   const [normalizedBackendCount, setNormalizedBackendCount] = useState<number | null>(null);
-  const updateNormalizedBackendCount = useCallback((count: number) => {
-    setNormalizedBackendCount(count);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchJson<{ backends: unknown[] }>("/model-backends")
+      .then((payload) => {
+        if (!cancelled) setNormalizedBackendCount(payload.backends.length);
+      })
+      .catch(() => {
+        if (!cancelled) setNormalizedBackendCount(null);
+      });
+    return () => { cancelled = true; };
   }, []);
 
   const bankServices = useMemo(
@@ -364,27 +371,6 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
       <h1 className="font-serif text-2xl">{tr("服务商管理", "Providers")}</h1>
 
       <ServiceConfigSourceCard onChange={() => { void refreshServices(); }} />
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium">{tr("登录凭证与高级后端", "Login credentials and advanced backends")}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {tr(
-              "先在服务商管理中连接 Codex、Grok 或自定义 API 后端，再配置模型连续性和故障转移。",
-              "Connect Codex, Grok, or a custom API backend here before configuring model continuity and failover.",
-            )}
-          </p>
-        </div>
-        <ModelRoutingPage
-          embedded
-          mode="providers"
-          nav={{
-            toServices: () => undefined,
-            toProjectSettings: () => undefined,
-          }}
-          onBackendCountChange={updateNormalizedBackendCount}
-        />
-      </section>
 
       <button
         type="button"

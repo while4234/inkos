@@ -15,6 +15,8 @@ import {
   type ServiceDetailModelInfo as ModelInfo,
   type ServiceDetailVerifiedProbe as VerifiedProbe,
 } from "./service-detail-state";
+import { CredentialServiceDetailPage } from "./CredentialServiceDetailPage";
+import type { BackendInstanceDTO, LogicalModelRouteDTO } from "../shared/contracts";
 
 interface Nav {
   toServices: () => void;
@@ -32,6 +34,16 @@ function DetailSkeleton() {
 }
 
 export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: Nav }) {
+  if (serviceId === "codex") {
+    return <CredentialServiceDetailPage key="codex" kind="codex" nav={nav} />;
+  }
+  if (serviceId === "xai") {
+    return <CredentialServiceDetailPage key="grok_oauth" kind="grok_oauth" nav={nav} />;
+  }
+  return <ApiKeyServiceDetailPage serviceId={serviceId} nav={nav} />;
+}
+
+function ApiKeyServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: Nav }) {
   // -- Service store --
   const services = useServiceStore((s) => s.services);
   const loading = useServiceStore((s) => s.servicesLoading);
@@ -58,9 +70,15 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [detectedModel, setDetectedModel] = useState<string>("");
   const [detectedConfig, setDetectedConfig] = useState<DetectedConfig | null>(null);
   const [verifiedProbe, setVerifiedProbe] = useState<VerifiedProbe | null>(null);
+  const [backendEnabled, setBackendEnabled] = useState(true);
+  const [includeInFailover, setIncludeInFailover] = useState(true);
 
   // -- Unified connection status --
   const [status, setStatus] = useState<ConnectionStatus>({ state: "idle" });
+  const resolvedCustomName = persistedCustomName || customName.trim() || "Custom";
+  const effectiveServiceId = isCustom ? `custom:${resolvedCustomName}` : serviceId;
+  const label = isCustom ? (customName || persistedCustomName || tr("自定义服务", "Custom service")) : (svc?.label ?? serviceId);
+  const storeModels = useServiceStore((s) => s.modelsByService[effectiveServiceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,10 +99,25 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
     return () => { cancelled = true; };
   }, [isCustom, persistedCustomName, serviceId]);
 
-  const resolvedCustomName = persistedCustomName || customName.trim() || "Custom";
-  const effectiveServiceId = isCustom ? `custom:${resolvedCustomName}` : serviceId;
-  const label = isCustom ? (customName || persistedCustomName || tr("自定义服务", "Custom service")) : (svc?.label ?? serviceId);
-  const storeModels = useServiceStore((s) => s.modelsByService[effectiveServiceId]);
+  useEffect(() => {
+    if (!isCustom || !effectiveServiceId.startsWith("custom:")) return;
+    let cancelled = false;
+    void Promise.all([
+      fetchJson<{ backends: BackendInstanceDTO[] }>("/model-backends"),
+      fetchJson<{ routes: LogicalModelRouteDTO[] }>("/model-routes"),
+    ]).then(([backendPayload, routePayload]) => {
+      if (cancelled) return;
+      const backend = backendPayload.backends.find((item) => item.service === effectiveServiceId);
+      if (!backend) return;
+      setBackendEnabled(backend.enabled);
+      const route = routePayload.routes.find((item) =>
+        item.candidates.some((candidate) => candidate.backendId === backend.id));
+      setIncludeInFailover(Boolean(route));
+      const candidate = route?.candidates.find((item) => item.backendId === backend.id);
+      if (candidate) setDetectedModel(candidate.upstreamModelId);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [effectiveServiceId, isCustom]);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,6 +163,40 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const isBusy = status.state === "testing" || status.state === "saving";
 
   // -- Handlers --
+  const handleDiscoverModels = async () => {
+    const trimmedKey = apiKey.trim();
+    if (isCustom && !baseUrl.trim()) {
+      setStatus({ state: "error", message: tr("请先填写 Base URL", "Enter a base URL first") });
+      return;
+    }
+    setStatus({ state: "testing" });
+    setVerifiedProbe(null);
+    try {
+      const result = await fetchJson<{ models: ModelInfo[] }>(
+        `/services/${encodeURIComponent(effectiveServiceId)}/models`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            apiKey: trimmedKey,
+            ...(isCustom ? { baseUrl: baseUrl.trim() } : {}),
+          }),
+        },
+      );
+      setStoreModels(effectiveServiceId, result.models);
+      setDetectedModel((current) =>
+        result.models.some((item) => item.id === current)
+          ? current
+          : (result.models[0]?.id ?? ""));
+      setStatus({ state: "connected", models: result.models });
+    } catch (error) {
+      setStatus({
+        state: "error",
+        message: error instanceof Error ? error.message : tr("检测模型失败", "Failed to detect models"),
+      });
+    }
+  };
+
   const handleTest = async () => {
     const trimmedKey = apiKey.trim();
     if (!trimmedKey && !hasStoredSecret && !isCustom) {
@@ -140,6 +207,10 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       setStatus({ state: "error", message: tr("请先填写 Base URL", "Enter a base URL first") });
       return;
     }
+    if (!detectedModel) {
+      setStatus({ state: "error", message: tr("请先检测并选择模型", "Detect and choose a model first") });
+      return;
+    }
     setApiKey(trimmedKey);
     setStatus({ state: "testing" });
     try {
@@ -147,6 +218,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         apiKey: trimmedKey,
         apiFormat,
         stream,
+        model: detectedModel,
         ...(isCustom ? { baseUrl: baseUrl.trim() } : {}),
       });
       if (result.ok) {
@@ -157,7 +229,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         if (result.detected?.apiFormat) setApiFormat(result.detected.apiFormat);
         if (typeof result.detected?.stream === "boolean") setStream(result.detected.stream);
         if (isCustom && result.detected?.baseUrl) setBaseUrl(result.detected.baseUrl);
-        setDetectedModel(result.selectedModel ?? "");
+        setDetectedModel(result.selectedModel ?? detectedModel);
         setDetectedConfig(result.detected ?? null);
         setVerifiedProbe({
           apiKey: trimmedKey,
@@ -165,7 +237,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           apiFormat: verifiedApiFormat,
           stream: verifiedStream,
           models,
-          selectedModel: result.selectedModel,
+          selectedModel: result.selectedModel ?? detectedModel,
           detected: result.detected,
         });
         setStatus({ state: "connected", models });
@@ -201,6 +273,13 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       setStatus({ state: "error", message: tr("请先填写 Base URL", "Enter a base URL first") });
       return;
     }
+    if (!verifiedProbe || verifiedProbe.selectedModel !== detectedModel) {
+      setStatus({
+        state: "error",
+        message: tr("请先使用所选模型完成真实请求测试", "Test a real request with the selected model first"),
+      });
+      return;
+    }
     setStatus({ state: "saving" });
     try {
       const result = await saveServiceConfig({
@@ -218,6 +297,21 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         verifiedProbe,
       });
       if (result.status.state === "connected") {
+        if (isCustom) {
+          await fetchJson(`/services/${encodeURIComponent(effectiveServiceId)}/normalized`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              displayName: resolvedCustomName,
+              baseUrl: result.detectedConfig?.baseUrl ?? baseUrl.trim(),
+              model: result.detectedModel,
+              apiFormat: result.detectedConfig?.apiFormat ?? apiFormat,
+              stream: result.detectedConfig?.stream ?? stream,
+              enabled: backendEnabled,
+              includeInFailover,
+            }),
+          });
+        }
         if (trimmedKey) setHasStoredSecret(true);
         if (result.detectedConfig?.apiFormat) setApiFormat(result.detectedConfig.apiFormat);
         if (typeof result.detectedConfig?.stream === "boolean") setStream(result.detectedConfig.stream);
@@ -290,14 +384,52 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           </div>
         </Field>
 
+        <div className="space-y-2">
+          <Field label={tr("模型", "Model")}>
+            <select
+              value={detectedModel}
+              onChange={(event) => {
+                setDetectedModel(event.target.value);
+                setVerifiedProbe(null);
+              }}
+              disabled={models.length === 0}
+              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm"
+            >
+              <option value="">{tr("请先检测模型", "Detect models first")}</option>
+              {models.map((item) => <option key={item.id} value={item.id}>{item.name ?? item.id}</option>)}
+            </select>
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            {tr("“检测支持模型”只读取目录；“测试连接”会用所选模型发起最小真实请求。", "Detect supported models only reads the catalogue; Test connection makes a minimal real request with the selected model.")}
+          </p>
+        </div>
+
+        {isCustom && (
+          <div className="flex flex-wrap gap-6 rounded-xl border border-border/40 bg-card/40 p-3 text-sm">
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={backendEnabled} onChange={(event) => setBackendEnabled(event.target.checked)} />
+              {tr("启用此后端", "Enable this backend")}
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={includeInFailover} onChange={(event) => setIncludeInFailover(event.target.checked)} />
+              {tr("纳入自动故障切换", "Include in automatic failover")}
+            </label>
+          </div>
+        )}
+
         {/* Actions + feedback */}
-        <div className="flex items-center gap-2">
-          <button onClick={handleTest} disabled={isBusy}
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => void handleDiscoverModels()} disabled={isBusy}
             className="flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg border border-border/60 hover:bg-secondary/50 transition-colors disabled:opacity-50">
             {status.state === "testing" && <Loader2 size={12} className="animate-spin" />}
-            {tr("测试连接", "Test connection")}
+            {tr("检测支持模型", "Detect supported models")}
           </button>
-          <button onClick={handleSave} disabled={isBusy}
+          <button onClick={handleTest} disabled={isBusy || !detectedModel}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg border border-primary/40 text-primary hover:bg-primary/5 transition-colors disabled:opacity-50">
+            {status.state === "testing" && <Loader2 size={12} className="animate-spin" />}
+            {tr("测试连接（真实请求）", "Test connection (real request)")}
+          </button>
+          <button onClick={handleSave} disabled={isBusy || !verifiedProbe}
             className="flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50">
             {status.state === "saving" && <Loader2 size={12} className="animate-spin" />}
             {tr("保存", "Save")}
@@ -312,11 +444,11 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           {/* Status feedback */}
           {status.state === "connected" && (
             <span className="text-xs text-emerald-500">
-              {tr(`连接成功，${models.length} 个模型`, `Connected, ${models.length} models`)}
+              {tr(`已读取 ${models.length} 个模型`, `Loaded ${models.length} models`)}
               {detectedModel
                 ? tr(
-                    `，已自动匹配 ${detectedModel}${detectedConfig ? ` / ${detectedConfig.apiFormat === "responses" ? "Responses" : "Chat"} / ${detectedConfig.stream ? "流式" : "非流式"}` : ""}`,
-                    `, auto-matched ${detectedModel}${detectedConfig ? ` / ${detectedConfig.apiFormat === "responses" ? "Responses" : "Chat"} / ${detectedConfig.stream ? "streaming" : "non-streaming"}` : ""}`,
+                    `，当前选择 ${detectedModel}${verifiedProbe ? "（真实请求通过）" : ""}`,
+                    `, selected ${detectedModel}${verifiedProbe ? " (real request passed)" : ""}`,
                   )
                 : ""}
             </span>
@@ -352,26 +484,6 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
             </label>
           </Field>
         </div>
-
-        {/* Models */}
-        {isConnected && (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground/70 font-medium uppercase tracking-wider">
-              {tr(`可用模型（${models.length}）`, `Available models (${models.length})`)}
-            </p>
-            {models.length > 0 ? (
-              <div className="flex gap-1.5 flex-wrap">
-                {models.map((m) => (
-                  <span key={m.id} className="text-[11px] px-2.5 py-1 rounded-md bg-emerald-500/[0.06] text-emerald-600 dark:text-emerald-400 border border-emerald-500/15">
-                    {m.name ?? m.id}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground/60">{tr("点击“测试连接”查看可用模型", "Click “Test connection” to list available models")}</p>
-            )}
-          </div>
-        )}
 
         {/* Advanced params */}
         <details className="group pt-2 border-t border-border/20">

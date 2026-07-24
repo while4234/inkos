@@ -47,6 +47,30 @@ export class ModelManagementStore {
     return this.readSecretsUnlocked();
   }
 
+  public async setApiKey(
+    expectedRevision: string | undefined,
+    credentialId: string,
+    apiKey: string,
+  ): Promise<ProjectRoutingDocument> {
+    return this.serialize(async () => {
+      const current = await this.readUnlocked();
+      assertRevision(expectedRevision, current.revision);
+      const credential = current.routing.credentials.find((item) => item.id === credentialId);
+      if (!credential || credential.kind !== "api_key") {
+        throw new ApiError(
+          404,
+          "MODEL_CREDENTIAL_NOT_FOUND",
+          `API Key credential "${credentialId}" was not found.`,
+        );
+      }
+      const secrets = await this.readSecretsUnlocked();
+      secrets.credentials ??= {};
+      secrets.credentials[credentialId] = { kind: "api_key", apiKey };
+      await saveSecrets(this.projectRoot, secrets);
+      return current;
+    });
+  }
+
   public async updateRouting(
     expectedRevision: string | undefined,
     mutate: RoutingMutation,

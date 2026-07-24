@@ -52,6 +52,11 @@ describe("model management API", () => {
   let grokStore: GrokCredentialStore;
   let app: Hono;
   const probe = vi.fn(async () => ({ ok: true, modelCount: 2 }));
+  const discoverCodexModels = vi.fn(async () => [
+    { id: "gpt-5.5", name: "gpt-5.5" },
+    { id: "gpt-5.3-codex", name: "gpt-5.3-codex" },
+  ]);
+  const testCodexModel = vi.fn(async () => undefined);
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-model-management-"));
@@ -122,12 +127,16 @@ describe("model management API", () => {
       grokConfig,
       grokClient,
       grokLoginManager: new GrokOAuthLoginManager(grokClient, grokStore),
+      discoverCodexModels,
+      testCodexModel,
     });
   });
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
     probe.mockClear();
+    discoverCodexModels.mockClear();
+    testCodexModel.mockClear();
   });
 
   it("returns only credential status and a non-reversible mask", async () => {
@@ -283,6 +292,34 @@ describe("model management API", () => {
         }),
       }),
     ]));
+
+    const models = await app.request(
+      "http://localhost/api/v1/model-auth/codex/credential-codex/models",
+      { method: "POST" },
+    );
+    expect(models.status).toBe(200);
+    expect(await models.json()).toEqual({
+      models: [
+        { id: "gpt-5.5", name: "gpt-5.5" },
+        { id: "gpt-5.3-codex", name: "gpt-5.3-codex" },
+      ],
+      source: "credential_catalog",
+    });
+    const tested = await app.request(
+      "http://localhost/api/v1/model-auth/codex/credential-codex/test",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "gpt-5.5" }),
+      },
+    );
+    expect(tested.status).toBe(200);
+    expect(await tested.json()).toMatchObject({ ok: true, model: "gpt-5.5" });
+    expect(testCodexModel).toHaveBeenCalledWith(
+      "credential-codex",
+      "gpt-5.5",
+      expect.any(AbortSignal),
+    );
 
     const afterImport = await json<{ revision: string }>(app, "/api/v1/model-backends");
     const backend = await app.request("http://localhost/api/v1/model-backends", {

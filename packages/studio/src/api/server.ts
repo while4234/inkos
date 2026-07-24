@@ -126,6 +126,7 @@ import {
   type AgentSessionAttachment,
   type LogicalModelRoute,
   type ModelRoutingConfig,
+  stableRoutingId,
 } from "@actalk/inkos-core";
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -2560,7 +2561,7 @@ async function probeServiceCapabilities(args: {
   const discoveredFirstModel =
     discoveredModels.find((model) => isTextChatModelId(model.id))?.id
     ?? discoveredModels[0]?.id;
-  if (discoveredModels.length > 0) {
+  if (discoveredModels.length > 0 && !args.preferredModel) {
     if (!discoveredFirstModel || !isTextChatModelId(discoveredFirstModel)) {
       return {
         ok: false,
@@ -2582,7 +2583,7 @@ async function probeServiceCapabilities(args: {
       modelsSource: "api",
     };
   }
-  if (shouldTrustStaticModelsWhenLiveListUnavailable(endpoint)) {
+  if (shouldTrustStaticModelsWhenLiveListUnavailable(endpoint) && !args.preferredModel) {
     const models = fallbackTextModelsForEndpoint(endpoint, preset);
     const selectedModel =
       endpoint?.checkModel && models.some((model) => model.id === endpoint.checkModel)
@@ -3483,16 +3484,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // --- Model discovery ---
 
   app.get("/api/v1/services", async (c) => {
-    const secrets = await loadSecrets(root);
+    const [secrets, modelRouting] = await Promise.all([
+      loadSecrets(root),
+      modelManagement.store.read(),
+    ]);
     const endpoints = getAllEndpoints().filter((ep) => ep.id !== "custom");
+    const normalizedBackends = modelRouting.routing.backends;
 
     // Fast: only check connection status from secrets, no external API calls.
     const services = endpoints.map((ep) => ({
       service: ep.id,
-      label: ep.label,
+      label: ep.id === "xai" ? "xAI (Grok)" : ep.label,
       group: ep.group,
-      connected: Boolean(secrets.services[ep.id]?.apiKey),
+      connected: ep.id === "xai"
+        ? normalizedBackends.some((backend) =>
+            backend.service === "xai" && backend.credentialRef.kind === "grok_oauth")
+          || Boolean(secrets.services[ep.id]?.apiKey)
+        : Boolean(secrets.services[ep.id]?.apiKey),
     })).sort(compareServiceListItems);
+    services.push({
+      service: "codex",
+      label: "Codex",
+      group: "overseas",
+      connected: normalizedBackends.some((backend) =>
+        backend.service === "codex" && backend.credentialRef.kind === "codex"),
+    });
 
     // Add custom services from inkos.json
     try {
@@ -3607,6 +3623,105 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     syncTopLevelLlmMirror(llm);
     await saveRawConfig(root, config);
     return c.json({ ok: true });
+  });
+
+  app.post("/api/v1/services/:service/normalized", async (c) => {
+    const service = c.req.param("service");
+    if (!isCustomServiceId(service)) {
+      return c.json({ error: "Only Custom API services use this normalization endpoint." }, 400);
+    }
+    const body = await c.req.json<{
+      displayName?: string;
+      baseUrl?: string;
+      model?: string;
+      apiFormat?: "chat" | "responses";
+      stream?: boolean;
+      enabled?: boolean;
+      includeInFailover?: boolean;
+    }>();
+    const displayName = body.displayName?.trim() ?? "";
+    const baseUrl = body.baseUrl?.trim() ?? "";
+    const model = body.model?.trim() ?? "";
+    if (!displayName || !baseUrl || !model) {
+      return c.json({ error: "Display name, Base URL, and selected model are required." }, 400);
+    }
+    const secrets = await loadSecrets(root);
+    const apiKey = secrets.services[service]?.apiKey ?? "";
+    const backendId = stableRoutingId("backend", `studio-provider\0${service}`);
+    const credentialId = stableRoutingId("credential", `studio-provider\0${service}`);
+    const routeId = stableRoutingId("route", `studio-provider\0${service}`);
+    let state = await modelManagement.store.read();
+    const existing = state.routing.backends.find((item) => item.id === backendId);
+    const backend = {
+      id: backendId,
+      displayName,
+      service,
+      provider: "custom" as const,
+      baseUrl,
+      credentialRef: {
+        id: existing?.credentialRef.id ?? credentialId,
+        kind: "api_key" as const,
+      },
+      enabled: body.enabled ?? true,
+      transport: {
+        apiFormat: body.apiFormat ?? "chat",
+        stream: body.stream ?? true,
+      },
+    };
+    if (existing) {
+      state = await modelManagement.store.updateRouting(state.revision, (routing) => {
+        const index = routing.backends.findIndex((item) => item.id === backendId);
+        routing.backends[index] = backend;
+      });
+      if (apiKey) {
+        state = await modelManagement.store.setApiKey(
+          state.revision,
+          backend.credentialRef.id,
+          apiKey,
+        );
+      }
+    } else {
+      if (!apiKey) {
+        return c.json({ error: "Enter the API Key once before creating the unified backend." }, 409);
+      }
+      state = await modelManagement.store.createBackend(
+        state.revision,
+        backend,
+        {
+          id: credentialId,
+          kind: "api_key",
+          label: `${displayName} API Key`,
+          scope: "project",
+        },
+        apiKey,
+      );
+    }
+    state = await modelManagement.store.updateRouting(state.revision, (routing) => {
+      const routeIndex = routing.routes.findIndex((item) => item.id === routeId);
+      if (body.includeInFailover ?? true) {
+        const route = {
+          id: routeId,
+          displayName: `${displayName} route`,
+          promptFamily: "generic" as const,
+          enabled: true,
+          candidates: [{ backendId, upstreamModelId: model }],
+        };
+        if (routeIndex >= 0) routing.routes[routeIndex] = route;
+        else routing.routes.push(route);
+        if (routing.defaultRouteId === null) routing.defaultRouteId = routeId;
+      } else if (routeIndex >= 0) {
+        routing.routes.splice(routeIndex, 1);
+        if (routing.defaultRouteId === routeId) {
+          routing.defaultRouteId = routing.routes.find((item) => item.enabled)?.id ?? null;
+        }
+      }
+    });
+    return c.json({
+      ok: true,
+      revision: state.revision,
+      backendId,
+      routeId: (body.includeInFailover ?? true) ? routeId : null,
+    });
   });
 
   app.get("/api/v1/cover/config", async (c) => {
@@ -3736,11 +3851,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.post("/api/v1/services/:service/test", async (c) => {
     const service = c.req.param("service");
-    const { apiKey, baseUrl, apiFormat, stream } = await c.req.json<{
+    const { apiKey, baseUrl, apiFormat, stream, model } = await c.req.json<{
       apiKey?: string;
       baseUrl?: string;
       apiFormat?: "chat" | "responses";
       stream?: boolean;
+      model?: string;
     }>();
 
     const language = await currentProjectLanguage();
@@ -3768,6 +3884,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
     const rawConfig = await loadRawConfig(root).catch(() => ({} as Record<string, unknown>));
     const llm = (rawConfig.llm as Record<string, unknown> | undefined) ?? {};
+    const testStartedAt = Date.now();
     const probe = await probeServiceCapabilities({
       root,
       service,
@@ -3775,6 +3892,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       baseUrl: resolvedBaseUrl,
       preferredApiFormat: apiFormat,
       preferredStream: stream,
+      preferredModel: model?.trim() || undefined,
       proxyUrl: typeof llm.proxyUrl === "string" ? llm.proxyUrl : undefined,
       language,
     });
@@ -3792,7 +3910,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         ok: false,
         error: probe.error ?? connectionFailed,
         probe: probeStatus,
-        chat: null,
+        chat: model?.trim()
+          ? { ok: false, latencyMs: Date.now() - testStartedAt, error: probe.error ?? connectionFailed }
+          : null,
       }, 400);
     }
 
@@ -3807,9 +3927,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         baseUrl: probe.baseUrl,
         modelsSource: probe.modelsSource,
       },
-      // B12 新字段：两步验证状态
       probe: probeStatus,
-      chat: null,  // probeServiceCapabilities 本身只做 probe，chat hello 在 Studio 的 follow-up 调用里单独触发
+      chat: model?.trim()
+        ? { ok: true, latencyMs: Date.now() - testStartedAt }
+        : null,
     });
   });
 
@@ -3903,6 +4024,40 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     })));
 
     return c.json({ groups });
+  });
+
+  app.post("/api/v1/services/:service/models", async (c) => {
+    const service = c.req.param("service");
+    const body = await c.req.json<{
+      apiKey?: string;
+      baseUrl?: string;
+    }>();
+    const secrets = await loadSecrets(root);
+    const apiKey = body.apiKey?.trim() || secrets.services[service]?.apiKey || "";
+    const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service, body.baseUrl);
+    const baseService = isCustomServiceId(service) ? "custom" : service;
+    const apiKeyOptional = isApiKeyOptionalForEndpoint({
+      provider: resolveServiceProviderFamily(baseService) ?? "openai",
+      baseUrl: resolvedBaseUrl,
+    });
+    if (!resolvedBaseUrl) {
+      return c.json({ error: "Base URL is required before detecting models." }, 400);
+    }
+    if (!apiKey && !apiKeyOptional) {
+      return c.json({ error: "API Key is required before detecting models." }, 400);
+    }
+    const enriched = await listModelsForService(
+      baseService,
+      apiKey,
+      isCustomServiceId(service) ? resolvedBaseUrl : undefined,
+    );
+    const models = filterTextChatModels(enriched).map((item) => ({
+      id: item.id,
+      name: item.name,
+      ...(item.maxOutput !== undefined ? { maxOutput: item.maxOutput } : {}),
+      ...(item.contextWindow > 0 ? { contextWindow: item.contextWindow } : {}),
+    }));
+    return c.json({ models, source: "live" });
   });
 
   app.get("/api/v1/services/:service/models", async (c) => {

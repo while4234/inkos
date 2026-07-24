@@ -354,6 +354,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     CredentialMetadataSchema: actual.CredentialMetadataSchema,
     LogicalModelRouteSchema: actual.LogicalModelRouteSchema,
     ModelRoutingConfigSchema: actual.ModelRoutingConfigSchema,
+    stableRoutingId: actual.stableRoutingId,
     FileBackendHealthStore: actual.FileBackendHealthStore,
     writeJsonAtomically: actual.writeJsonAtomically,
     writeProjectConfigWithRouting: writeProjectConfigWithRoutingMock,
@@ -1120,9 +1121,13 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { services: Array<{ service: string; group?: string; connected: boolean }> };
     const bank = body.services.filter((s) => !s.service.startsWith("custom"));
-    expect(bank.length).toBe(37);
+    expect(bank.length).toBe(38);
     expect(bank.every((s) => typeof s.group === "string")).toBe(true);
-    expect(bank.filter((s) => s.group === "overseas")).toHaveLength(5);
+    expect(bank.filter((s) => s.group === "overseas")).toHaveLength(6);
+    expect(bank).toEqual(expect.arrayContaining([
+      expect.objectContaining({ service: "codex", label: "Codex", group: "overseas" }),
+      expect.objectContaining({ service: "xai", label: "xAI (Grok)", group: "overseas" }),
+    ]));
     expect(bank.filter((s) => s.group === "china")).toHaveLength(18);
     expect(bank.filter((s) => s.group === "aggregator")).toHaveLength(4);
     expect(bank.filter((s) => s.group === "local")).toHaveLength(2);
@@ -1388,6 +1393,65 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(raw.llm.model).toBe("deepseek-v4-flash");
     expect(raw.llm.provider).toBe("openai");
     expect(raw.llm.baseUrl).toBe("https://api.kkaiapi.com/v1");
+  });
+
+  it("normalizes a saved Custom API backend and selected model for continuity", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    await app.request("http://localhost/api/v1/services/custom%3AGateway/secret", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "sk-normalized-custom" }),
+    });
+    await app.request("http://localhost/api/v1/services/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service: "custom:Gateway",
+        defaultModel: "model-two",
+        services: [{
+          service: "custom",
+          name: "Gateway",
+          baseUrl: "https://gateway.example.test/v1",
+          apiFormat: "chat",
+          stream: true,
+        }],
+      }),
+    });
+
+    const normalized = await app.request(
+      "http://localhost/api/v1/services/custom%3AGateway/normalized",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "Gateway",
+          baseUrl: "https://gateway.example.test/v1",
+          model: "model-two",
+          apiFormat: "chat",
+          stream: true,
+          enabled: true,
+          includeInFailover: true,
+        }),
+      },
+    );
+    expect(normalized.status).toBe(200);
+    const backends = await app.request("http://localhost/api/v1/model-backends");
+    const backendText = await backends.text();
+    expect(backendText).not.toContain("sk-normalized-custom");
+    const backendBody = JSON.parse(backendText) as {
+      backends: Array<{ id: string; service: string; credential: { configured: boolean } }>;
+    };
+    const backend = backendBody.backends.find((item) => item.service === "custom:Gateway");
+    expect(backend).toMatchObject({ service: "custom:Gateway", credential: { configured: true } });
+    const routes = await app.request("http://localhost/api/v1/model-routes");
+    expect(await routes.json()).toMatchObject({
+      routes: [
+        expect.objectContaining({
+          candidates: [{ backendId: backend?.id, upstreamModelId: "model-two" }],
+        }),
+      ],
+    });
   });
 
   it("deletes a custom service config and stored secret", async () => {
@@ -2002,6 +2066,42 @@ describe("createStudioServer daemon lifecycle", () => {
         { id: "model-two", name: "model-two" },
         { id: "model-three", name: "model-three" },
       ],
+    });
+  });
+
+  it("uses the explicitly selected model for a real connection-test request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "model-one" }, { id: "model-two" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+    createLLMClientMock.mockImplementation(((cfg: unknown) => cfg) as any);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const response = await app.request("http://localhost/api/v1/services/volcengine/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey: "volc-key",
+        baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+        apiFormat: "chat",
+        stream: false,
+        model: "model-two",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(chatCompletionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "model-two",
+      [{ role: "user", content: "Reply with OK only." }],
+      expect.objectContaining({ retry: false, modelGlobalPrompt: "disabled" }),
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      selectedModel: "model-two",
+      chat: { ok: true },
     });
   });
 

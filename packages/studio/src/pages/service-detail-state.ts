@@ -47,6 +47,7 @@ export async function probeServiceForDetail(
     readonly apiFormat: "chat" | "responses";
     readonly stream: boolean;
     readonly baseUrl?: string;
+    readonly model?: string;
   },
   deps?: { readonly fetchJsonImpl?: JsonFetcher },
 ): Promise<ServiceProbeResponse> {
@@ -149,7 +150,12 @@ export async function saveServiceConfig(args: {
       && verified.apiKey === trimmedKey
       && verified.baseUrl === verifiedBaseUrl
       && verified.apiFormat === args.apiFormat
-      && verified.stream === args.stream,
+      && verified.stream === args.stream
+      && (
+        !args.detectedModel
+        || verified.selectedModel === undefined
+        || verified.selectedModel === args.detectedModel
+      ),
   );
 
   let probe: ServiceProbeResponse;

@@ -69,12 +69,12 @@ export function registerModelRouteRoutes(app: Hono, store: ModelManagementStore)
     const result = await store.updateRouting(
       revisionFromRequest(body, c.req.header("If-Match")),
       (routing) => {
-        if (routing.defaultRouteId === routeId) {
-          throw new ApiError(409, "MODEL_ROUTE_IS_DEFAULT", "Choose another default route before deleting this route.");
-        }
         const index = routing.routes.findIndex((route) => route.id === routeId);
         if (index < 0) throw new ApiError(404, "MODEL_ROUTE_NOT_FOUND", `Route "${routeId}" was not found.`);
         routing.routes.splice(index, 1);
+        if (routing.defaultRouteId === routeId) {
+          routing.defaultRouteId = routing.routes.find((route) => route.enabled)?.id ?? null;
+        }
       },
     );
     return c.json({ ok: true, revision: result.revision }, 200, { ETag: `"${result.revision}"` });

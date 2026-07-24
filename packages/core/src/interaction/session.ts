@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AutomationModeSchema, type AutomationMode } from "./modes.js";
 import { ExecutionStateSchema, InteractionEventSchema, type InteractionEvent } from "./events.js";
+import { RoutingTraceSchema } from "../llm/routing-trace.js";
 import { assertSafeBookId, isSafeBookId } from "../utils/book-id.js";
 
 export const SessionKindSchema = z.enum(["chat", "book-create", "book", "short", "play", "script", "storyboard", "interactive-film", "edit", "interactive-film-authoring"]);
@@ -61,6 +62,7 @@ export const AgentRoutingResultSchema = z.object({
   promptRevision: z.number().int().nonnegative().nullable(),
   retryCount: z.number().int().nonnegative(),
   terminalState: z.enum(["succeeded", "failed", "interrupted", "exhausted", "cancelled"]),
+  trace: RoutingTraceSchema.optional(),
 }).strict();
 
 export type AgentRoutingResult = z.infer<typeof AgentRoutingResultSchema>;

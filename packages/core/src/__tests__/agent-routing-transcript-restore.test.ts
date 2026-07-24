@@ -77,6 +77,22 @@ describe("Agent routing transcript restore", () => {
       promptRevision: 2,
       retryCount: 0,
       terminalState: "interrupted",
+      trace: {
+        version: 1,
+        requestId: "route-request",
+        operationId: "route-request",
+        logicalModelId: "agent-default",
+        logicalModelDisplayName: null,
+        prompt: null,
+        context: { sessionId: "s1" },
+        attempts: [],
+        switches: [],
+        backends: [],
+        visibleOutput: true,
+        finalBackendId: "backend-a",
+        finalModelId: "gpt-route",
+        finalStatus: "interrupted",
+      },
     });
     await appendTranscriptEvent(projectRoot, {
       type: "request_failed",
@@ -164,6 +180,11 @@ describe("Agent routing transcript restore", () => {
       actualBackendId: "backend-a",
       actualModelId: "gpt-route",
       terminalState: "interrupted",
+      trace: {
+        version: 1,
+        requestId: "route-request",
+        finalStatus: "interrupted",
+      },
     });
     expect(JSON.stringify(routingResult)).not.toMatch(/authorization|bearer|api.?key|system prompt/i);
     expect(session?.messages[1]).toMatchObject({
